@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#06090d" />
+    <meta name="description" content="Laboratorio físico WebGL del rover de David Farfán" />
+    <title>Rover Dynamics Lab</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene" aria-label="Simulación tridimensional del rover"></canvas>
+
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Rover Dynamics Lab">
+          <span class="brand-mark">R</span>
+          <span><strong>ROVER</strong><small>DYNAMICS LAB</small></span>
+        </a>
+        <div class="status"><i></i><span>FÍSICA EN TIEMPO REAL</span></div>
+      </header>
+
+      <aside class="telemetry" aria-label="Telemetría">
+        <p class="eyebrow">TELEMETRÍA</p>
+        <div class="metric metric-main">
+          <span>VELOCIDAD</span>
+          <strong id="speed">0.0</strong>
+          <small>km/h</small>
+        </div>
+        <div class="metric-row">
+          <div class="metric"><span>DIRECCIÓN</span><strong id="steering">0°</strong></div>
+          <div class="metric"><span>CONTACTOS</span><strong id="contacts">0/4</strong></div>
+        </div>
+        <div class="suspension-readout">
+          <div><span>SUSP. IZQ.</span><b id="suspension-left">0 mm</b><i><em id="bar-left"></em></i></div>
+          <div><span>SUSP. DER.</span><b id="suspension-right">0 mm</b><i><em id="bar-right"></em></i></div>
+        </div>
+        <button id="camera-button" class="panel-button" type="button">CÁMARA: SEGUIMIENTO</button>
+        <button id="reset-button" class="panel-button secondary" type="button">REINICIAR ROVER</button>
+      </aside>
+
+      <section class="instructions">
+        <p class="eyebrow">CAMPO DE PRUEBAS · V0.1</p>
+        <h1>Suspensión bajo carga.</h1>
+        <p>Conduce sobre las rampas alternadas. Rapier calcula el contacto, la tracción y el recorrido de cada rueda.</p>
+      </section>
+
+      <div class="controls" aria-label="Controles de conducción">
+        <button data-key="KeyW" aria-label="Avanzar"><kbd>W</kbd><span>AVANZAR</span></button>
+        <div>
+          <button data-key="KeyA" aria-label="Girar a la izquierda"><kbd>A</kbd></button>
+          <button data-key="KeyS" aria-label="Retroceder"><kbd>S</kbd></button>
+          <button data-key="KeyD" aria-label="Girar a la derecha"><kbd>D</kbd></button>
+        </div>
+        <small>R · REINICIAR&nbsp;&nbsp; C · CÁMARA</small>
+      </div>
+
+      <div id="loading" class="loading" role="status">
+        <div class="loader-ring"></div>
+        <strong>PREPARANDO SIMULACIÓN</strong>
+        <span id="loading-status">Inicializando motor físico…</span>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

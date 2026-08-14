@@ -1,0 +1,79 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap");
+
+:root {
+  color: #f1f5f8;
+  background: #06090d;
+  font-family: "Inter", system-ui, sans-serif;
+  font-synthesis: none;
+  --line: rgba(171, 203, 225, 0.18);
+  --panel: rgba(5, 10, 15, 0.82);
+  --blue: #57b7ed;
+  --orange: #db6d35;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+button, a { color: inherit; font: inherit; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+
+.topbar {
+  position: fixed; inset: 0 0 auto; height: 76px; padding: 0 34px; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(3,7,11,.88), rgba(3,7,11,.28));
+  backdrop-filter: blur(8px);
+}
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+.brand-mark { width: 39px; height: 39px; border: 1px solid #dbeaf4; border-radius: 50%; display: grid; place-items: center; font: 700 24px/1 "Barlow Condensed"; transform: rotate(-12deg); }
+.brand strong, .brand small { display: block; font-family: "Barlow Condensed"; letter-spacing: .2em; }
+.brand strong { font-size: 16px; }.brand small { color: #91a3af; font-size: 9px; margin-top: 2px; }
+.status { display: flex; align-items: center; gap: 9px; color: #94a8b6; font: 500 10px/1 "Barlow Condensed"; letter-spacing: .22em; }
+.status i { width: 7px; height: 7px; border-radius: 50%; background: #6bd39b; box-shadow: 0 0 14px #6bd39b; }
+
+.telemetry {
+  position: fixed; z-index: 9; top: 96px; right: 24px; width: 244px; padding: 22px;
+  border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(14px);
+  box-shadow: 0 24px 60px rgba(0,0,0,.28);
+}
+.eyebrow { margin: 0 0 16px; color: #8fa2af; font: 600 10px/1 "Barlow Condensed"; letter-spacing: .24em; }
+.metric { padding: 13px 0; border-top: 1px solid var(--line); }
+.metric span { display: block; color: #7e919e; font: 500 9px/1 "Barlow Condensed"; letter-spacing: .18em; }
+.metric strong { display: inline-block; margin-top: 7px; font: 500 28px/1 "Barlow Condensed"; }
+.metric small { margin-left: 5px; color: #8da0ad; font: 500 10px/1 "Barlow Condensed"; letter-spacing: .12em; }
+.metric-main strong { font-size: 52px; }
+.metric-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.metric-row .metric strong { font-size: 24px; }
+.suspension-readout { padding: 13px 0 15px; border-top: 1px solid var(--line); }
+.suspension-readout > div { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 7px 10px; margin: 10px 0; }
+.suspension-readout span, .suspension-readout b { font: 500 9px/1 "Barlow Condensed"; letter-spacing: .12em; }
+.suspension-readout span { color: #7e919e; }.suspension-readout b { color: #c7d3da; }
+.suspension-readout i { grid-column: 1 / -1; height: 3px; overflow: hidden; background: rgba(255,255,255,.08); }
+.suspension-readout em { display: block; width: 50%; height: 100%; background: var(--blue); transition: width .08s linear; }
+.panel-button { width: 100%; margin-top: 8px; padding: 10px; border: 1px solid rgba(87,183,237,.45); background: rgba(87,183,237,.08); color: #b9e4fb; cursor: pointer; font: 600 10px/1 "Barlow Condensed"; letter-spacing: .13em; }
+.panel-button:hover { background: rgba(87,183,237,.18); }
+.panel-button.secondary { color: #9caab3; border-color: var(--line); background: transparent; }
+
+.instructions { position: fixed; z-index: 8; left: 34px; bottom: 34px; width: min(380px, calc(100vw - 68px)); pointer-events: none; }
+.instructions h1 { margin: 0 0 10px; font: 500 clamp(34px, 4vw, 58px)/.96 "Barlow Condensed"; letter-spacing: -.02em; }
+.instructions > p:last-child { margin: 0; max-width: 360px; color: #a1b0b9; font-size: 12px; line-height: 1.65; }
+
+.controls { position: fixed; z-index: 9; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.controls > button { align-self: center; }
+.controls > div { display: flex; gap: 5px; }
+.controls button { width: 58px; height: 53px; padding: 5px; border: 1px solid rgba(216,231,240,.25); background: rgba(5,10,15,.72); backdrop-filter: blur(8px); cursor: pointer; transition: .15s ease; }
+.controls button:hover, .controls button.active { border-color: var(--blue); background: rgba(62,151,202,.23); transform: translateY(-2px); }
+.controls kbd { display: block; font: 600 18px/1 "Barlow Condensed"; }
+.controls button span { display: block; margin-top: 4px; color: #8da0ad; font: 500 7px/1 "Barlow Condensed"; letter-spacing: .08em; }
+.controls small { margin-top: 5px; color: #657883; font: 500 8px/1 "Barlow Condensed"; letter-spacing: .12em; }
+
+.loading { position: fixed; z-index: 50; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: #05090d; transition: opacity .6s ease, visibility .6s; }
+.loading.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+.loader-ring { width: 42px; height: 42px; margin-bottom: 8px; border: 1px solid rgba(255,255,255,.12); border-top-color: var(--blue); border-radius: 50%; animation: spin 1s linear infinite; }
+.loading strong { font: 600 13px/1 "Barlow Condensed"; letter-spacing: .2em; }.loading span { color: #758995; font-size: 10px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 760px) {
+  .topbar { height: 62px; padding: 0 16px; }.status span { display: none; }
+  .telemetry { top: 74px; right: 12px; width: 180px; padding: 15px; }.metric-main strong { font-size: 40px; }
+  .instructions { left: 18px; bottom: 142px; width: 240px; }.instructions h1 { font-size: 34px; }.instructions > p:last-child { display: none; }
+  .controls { bottom: 15px; }.controls button { width: 52px; height: 47px; }
+}

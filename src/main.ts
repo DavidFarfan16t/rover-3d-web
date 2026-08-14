@@ -34,7 +34,8 @@ const terrainHeight = (x: number, z: number) => {
     gaussian(x, z, 5.0, -14.0, 3.1, 0.78) -
     gaussian(x, z, -2.0, -2.5, 1.7, 0.42) -
     gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
-    gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
+    gaussian(x, z, -5.0, -13.0, 2.5, 0.55)+
+    gaussian(x, z,  7, -10.0,  5.0,  2.0);
 
   // Montículos estrechos, alternados sobre cada huella. La física no cambia:
   // la amplificación visual de los balancines se aplica después al modelo GLB.

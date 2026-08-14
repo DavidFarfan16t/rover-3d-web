@@ -49,7 +49,7 @@ async function start() {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x071019);
-  scene.fog = new THREE.Fog(0x071019, 13, 34);
+  scene.fog = new THREE.Fog(0x071019, 18, 45);
 
   const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.03, 100);
   camera.position.set(3.2, 2.15, 6.2);
@@ -78,7 +78,7 @@ async function start() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = FIXED_STEP;
 
-  createTestTrack(scene, world);
+  createMarsTerrain(scene, world);
 
   const chassisBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
@@ -350,79 +350,119 @@ async function start() {
   });
 }
 
-function createTestTrack(scene: THREE.Scene, world: RAPIER.World) {
-  const groundBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.08, -3));
-  world.createCollider(RAPIER.ColliderDesc.cuboid(12, 0.08, 17).setFriction(1.25).setRestitution(0), groundBody);
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(24, 34, 1, 1),
-    new THREE.MeshStandardMaterial({ color: 0x4a2116, roughness: 0.92, metalness: 0.02 }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.set(0, 0.002, -3);
-  ground.receiveShadow = true;
-  scene.add(ground);
+function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
+  const width = 28;
+  const depth = 44;
+  const centerZ = -5;
+  const xSegments = 84;
+  const zSegments = 132;
+  const rowSize = xSegments + 1;
+  const vertexCount = rowSize * (zSegments + 1);
+  const vertices = new Float32Array(vertexCount * 3);
+  const colors = new Float32Array(vertexCount * 3);
+  const indices = new Uint32Array(xSegments * zSegments * 6);
 
-  const grid = new THREE.GridHelper(24, 24, 0xb85832, 0x73351f);
-  grid.position.set(0, 0.008, -3);
-  const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
-  gridMaterials.forEach((material) => { material.transparent = true; material.opacity = 0.32; });
-  scene.add(grid);
-
-  const addBox = (
-    position: THREE.Vector3,
-    size: THREE.Vector3,
-    rotation: THREE.Euler,
-    color: number,
-  ) => {
-    const quaternion = new THREE.Quaternion().setFromEuler(rotation);
-    const body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(position.x, position.y, position.z)
-        .setRotation({ x: quaternion.x, y: quaternion.y, z: quaternion.z, w: quaternion.w }),
-    );
-    world.createCollider(
-      RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2).setFriction(1.2).setRestitution(0),
-      body,
-    );
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(size.x, size.y, size.z),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.88 }),
-    );
-    mesh.position.copy(position);
-    mesh.quaternion.copy(quaternion);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    scene.add(mesh);
+  const gaussian = (x: number, z: number, cx: number, cz: number, radius: number, height: number) => {
+    const dx = x - cx;
+    const dz = z - cz;
+    return height * Math.exp(-(dx * dx + dz * dz) / (2 * radius * radius));
   };
 
-  // Obstáculos alternados: primero trabaja el lado izquierdo, luego el derecho.
-  addBox(new THREE.Vector3(-0.48, 0.085, 1.15), new THREE.Vector3(0.54, 0.17, 1.15), new THREE.Euler(0, 0, 0.04), 0x8d4227);
-  addBox(new THREE.Vector3(0.48, 0.12, -1.0), new THREE.Vector3(0.56, 0.24, 1.2), new THREE.Euler(0, 0, -0.05), 0xa34c2a);
-  addBox(new THREE.Vector3(-0.46, 0.16, -3.35), new THREE.Vector3(0.62, 0.32, 1.25), new THREE.Euler(0, 0, 0.06), 0x78351f);
+  const terrainHeight = (x: number, z: number) => {
+    // Ondulación continua de gran escala: evita el aspecto de plano con piezas encima.
+    const rolling =
+      Math.sin(x * 0.34 + z * 0.08) * 0.19 +
+      Math.cos(z * 0.25 - x * 0.05) * 0.17 +
+      Math.sin((x + z) * 0.43) * 0.09;
 
-  // Rampa completa para comprobar estabilidad y frenado.
-  addBox(new THREE.Vector3(0, 0.14, -6.2), new THREE.Vector3(1.7, 0.16, 2.2), new THREE.Euler(-0.12, 0, 0), 0x6f321f);
+    // Lomas amplias y depresiones suaves distribuidas por el campo de pruebas.
+    const formations =
+      gaussian(x, z, -4.5, 0.3, 3.2, 0.72) +
+      gaussian(x, z, 4.2, -2.4, 2.8, 0.58) +
+      gaussian(x, z, -1.0, -9.0, 4.0, 0.82) +
+      gaussian(x, z, 5.0, -14.0, 3.4, 0.64) -
+      gaussian(x, z, -2.0, -2.5, 1.7, 0.42) -
+      gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
+      gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
 
-  // Rocas visuales laterales para dar escala sin bloquear el recorrido principal.
-  [
-    new THREE.Vector3(-2.6, 0.22, 0.4),
-    new THREE.Vector3(2.8, 0.18, -2.4),
-    new THREE.Vector3(-3.2, 0.26, -6.8),
-  ].forEach((position, index) => {
-    const radius = 0.28 + index * 0.05;
-    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z));
-    world.createCollider(RAPIER.ColliderDesc.ball(radius * 0.8).setFriction(1.1).setRestitution(0), body);
-    const rock = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(radius, 1),
-      new THREE.MeshStandardMaterial({ color: 0x522419, roughness: 1 }),
-    );
-    rock.position.copy(position);
-    rock.scale.set(1.35, 0.72, 1);
-    rock.rotation.set(index * 0.4, index * 0.8, 0.1);
-    rock.castShadow = true;
-    rock.receiveShadow = true;
-    scene.add(rock);
-  });
+    // Rugosidad de baja amplitud para que cada rueda encuentre alturas distintas.
+    const fine =
+      Math.sin(x * 1.37 + z * 0.71) * 0.028 +
+      Math.sin(x * 2.21 - z * 1.14) * 0.016;
+
+    // Plataforma de aparición integrada en el terreno, con transición gradual.
+    const spawnDistance = Math.hypot(x - START.x, z - START.z);
+    const terrainBlend = THREE.MathUtils.smoothstep(spawnDistance, 1.35, 3.4);
+    return (rolling + formations + fine) * terrainBlend;
+  };
+
+  let vertexOffset = 0;
+  const darkSand = new THREE.Color(0x6f2417);
+  const lightSand = new THREE.Color(0xc15b2d);
+  const vertexColor = new THREE.Color();
+
+  for (let zIndex = 0; zIndex <= zSegments; zIndex += 1) {
+    const z = centerZ - depth / 2 + (zIndex / zSegments) * depth;
+    for (let xIndex = 0; xIndex <= xSegments; xIndex += 1) {
+      const x = -width / 2 + (xIndex / xSegments) * width;
+      const y = terrainHeight(x, z);
+      vertices[vertexOffset] = x;
+      vertices[vertexOffset + 1] = y;
+      vertices[vertexOffset + 2] = z;
+
+      const shade = THREE.MathUtils.clamp(0.43 + y * 0.26 + Math.sin(x * 0.7 + z * 0.4) * 0.055, 0, 1);
+      vertexColor.lerpColors(darkSand, lightSand, shade);
+      colors[vertexOffset] = vertexColor.r;
+      colors[vertexOffset + 1] = vertexColor.g;
+      colors[vertexOffset + 2] = vertexColor.b;
+      vertexOffset += 3;
+    }
+  }
+
+  let indexOffset = 0;
+  for (let zIndex = 0; zIndex < zSegments; zIndex += 1) {
+    for (let xIndex = 0; xIndex < xSegments; xIndex += 1) {
+      const a = zIndex * rowSize + xIndex;
+      const b = a + 1;
+      const c = a + rowSize;
+      const d = c + 1;
+      // Orden antihorario visto desde arriba para obtener normales hacia +Y.
+      indices[indexOffset] = a;
+      indices[indexOffset + 1] = c;
+      indices[indexOffset + 2] = b;
+      indices[indexOffset + 3] = b;
+      indices[indexOffset + 4] = c;
+      indices[indexOffset + 5] = d;
+      indexOffset += 6;
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+
+  const terrain = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.98,
+      metalness: 0,
+    }),
+  );
+  terrain.receiveShadow = true;
+  scene.add(terrain);
+
+  // El collider usa exactamente los mismos triángulos de la malla visible.
+  const terrainBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  world.createCollider(
+    RAPIER.ColliderDesc.trimesh(vertices, indices)
+      .setFriction(1.22)
+      .setRestitution(0),
+    terrainBody,
+  );
 }
 
 start().catch((error: unknown) => {

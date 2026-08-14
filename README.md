@@ -7,7 +7,8 @@ Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para
 - Modelo GLB V2 con jerarquía de ruedas, dirección y suspensión.
 - Control vehicular físico mediante ray casting de Rapier.
 - Tracción, frenado y dirección en las cuatro ruedas.
-- Obstáculos alternados para observar el trabajo de cada lado de la suspensión.
+- Terreno marciano continuo con lomas, depresiones y rugosidad para observar la suspensión.
+- Una misma malla triangular se utiliza para la representación visual y las colisiones.
 - Telemetría de velocidad, contactos y compresión.
 - Cámara de seguimiento y cámara orbital.
 

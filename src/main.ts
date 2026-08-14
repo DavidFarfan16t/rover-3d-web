@@ -377,13 +377,23 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
 
     // Lomas amplias y depresiones suaves distribuidas por el campo de pruebas.
     const formations =
-      gaussian(x, z, -4.5, 0.3, 3.2, 0.72) +
-      gaussian(x, z, 4.2, -2.4, 2.8, 0.58) +
-      gaussian(x, z, -1.0, -9.0, 4.0, 0.82) +
-      gaussian(x, z, 5.0, -14.0, 3.4, 0.64) -
+      gaussian(x, z, -4.5, 0.3, 2.5, 0.88) +
+      gaussian(x, z, 4.2, -2.4, 2.2, 0.76) +
+      gaussian(x, z, -1.0, -9.0, 3.2, 1.02) +
+      gaussian(x, z, 5.0, -14.0, 2.7, 0.84) -
       gaussian(x, z, -2.0, -2.5, 1.7, 0.42) -
       gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
       gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
+
+    // Montículos estrechos alternados sobre las huellas de las ruedas.
+    // La separación lateral del rover es cercana a 1.10 m; estos radios hacen
+    // que suba una rueda mientras la rueda del lado opuesto permanece abajo.
+    const singleWheelBumps =
+      gaussian(x, z, -0.55, 1.15, 0.46, 0.34) +
+      gaussian(x, z, 0.55, -0.75, 0.43, 0.38) +
+      gaussian(x, z, -0.55, -2.75, 0.44, 0.36) +
+      gaussian(x, z, 0.55, -4.80, 0.46, 0.40) +
+      gaussian(x, z, -0.55, -6.85, 0.42, 0.37);
 
     // Rugosidad de baja amplitud para que cada rueda encuentre alturas distintas.
     const fine =
@@ -393,7 +403,7 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
     // Plataforma de aparición integrada en el terreno, con transición gradual.
     const spawnDistance = Math.hypot(x - START.x, z - START.z);
     const terrainBlend = THREE.MathUtils.smoothstep(spawnDistance, 1.35, 3.4);
-    return (rolling + formations + fine) * terrainBlend;
+    return (rolling + formations + singleWheelBumps + fine) * terrainBlend;
   };
 
   let vertexOffset = 0;

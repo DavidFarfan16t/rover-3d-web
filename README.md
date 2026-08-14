@@ -9,6 +9,8 @@ Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para
 - Tracción, frenado y dirección en las cuatro ruedas.
 - Terreno marciano continuo con lomas, depresiones y rugosidad para observar la suspensión.
 - Montículos estrechos alternados para elevar una sola rueda y probar la articulación lateral.
+- Suspensión raycast de recorrido ampliado y mayor amortiguación para conservar los cuatro contactos.
+- Ángulo visual del balancín calculado geométricamente según la distancia entre ejes.
 - Una misma malla triangular se utiliza para la representación visual y las colisiones.
 - Telemetría de velocidad, contactos y compresión.
 - Cámara de seguimiento y cámara orbital.

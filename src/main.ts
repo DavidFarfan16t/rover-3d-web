@@ -10,7 +10,7 @@ const FIXED_STEP = 1 / PHYSICS_HZ;
 const MAX_FRAME_DELTA = 0.08;
 const MAX_SUBSTEPS = 10;
 const WHEEL_RADIUS = 0.182;
-const SUSPENSION_REST = 0.17;
+const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
 
 type ControlBinding = {
@@ -84,7 +84,7 @@ async function start() {
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(START.x, START.y, START.z)
       .setLinearDamping(0.18)
-      .setAngularDamping(1.35)
+      .setAngularDamping(2.1)
       // El controlador raycast aplica fuerzas externas. Si Rapier duerme el
       // chasis mientras el GLB termina de cargar, esas fuerzas pueden no
       // arrancar el rover hasta hacer un reinicio manual.
@@ -94,7 +94,7 @@ async function start() {
   );
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(0.43, 0.12, 0.46)
-      .setTranslation(0, 0.06, 0)
+      .setTranslation(0, -0.04, 0)
       .setDensity(90)
       .setFriction(1.1)
       .setRestitution(0),
@@ -116,13 +116,13 @@ async function start() {
   wheelConnections.forEach((point) => {
     vehicle.addWheel(point, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, SUSPENSION_REST, WHEEL_RADIUS);
     const index = vehicle.numWheels() - 1;
-    vehicle.setWheelSuspensionStiffness(index, 36);
-    vehicle.setWheelSuspensionCompression(index, 4.5);
-    vehicle.setWheelSuspensionRelaxation(index, 5.5);
-    vehicle.setWheelMaxSuspensionTravel(index, 0.14);
+    vehicle.setWheelSuspensionStiffness(index, 30);
+    vehicle.setWheelSuspensionCompression(index, 5.8);
+    vehicle.setWheelSuspensionRelaxation(index, 7.0);
+    vehicle.setWheelMaxSuspensionTravel(index, 0.26);
     vehicle.setWheelMaxSuspensionForce(index, 4200);
-    vehicle.setWheelFrictionSlip(index, 3.1);
-    vehicle.setWheelSideFrictionStiffness(index, 0.88);
+    vehicle.setWheelFrictionSlip(index, 2.7);
+    vehicle.setWheelSideFrictionStiffness(index, 0.82);
   });
 
   const gltf = await new GLTFLoader().loadAsync(MODEL_URL);
@@ -279,8 +279,17 @@ async function start() {
     wheels.forEach((wheel, index) => applyBinding(wheel, vehicle.wheelRotation(index) ?? 0));
 
     const lengths = [0, 1, 2, 3].map((index) => vehicle.wheelSuspensionLength(index) ?? SUSPENSION_REST);
-    const leftTarget = THREE.MathUtils.clamp((lengths[2] - lengths[0]) * 2.6, -0.38, 0.38);
-    const rightTarget = THREE.MathUtils.clamp((lengths[1] - lengths[3]) * 2.6, -0.38, 0.38);
+    const sideWheelbase = Math.abs(wheelConnections[2].z - wheelConnections[0].z);
+    const leftTarget = THREE.MathUtils.clamp(
+      Math.atan2(lengths[2] - lengths[0], sideWheelbase),
+      -0.46,
+      0.46,
+    );
+    const rightTarget = THREE.MathUtils.clamp(
+      Math.atan2(lengths[1] - lengths[3], sideWheelbase),
+      -0.46,
+      0.46,
+    );
     leftRocker = THREE.MathUtils.damp(leftRocker, leftTarget, 9, dt);
     rightRocker = THREE.MathUtils.damp(rightRocker, rightTarget, 9, dt);
     applyBinding(suspensionControls[0], leftRocker);
@@ -377,10 +386,10 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
 
     // Lomas amplias y depresiones suaves distribuidas por el campo de pruebas.
     const formations =
-      gaussian(x, z, -4.5, 0.3, 2.5, 0.88) +
-      gaussian(x, z, 4.2, -2.4, 2.2, 0.76) +
-      gaussian(x, z, -1.0, -9.0, 3.2, 1.02) +
-      gaussian(x, z, 5.0, -14.0, 2.7, 0.84) -
+      gaussian(x, z, -4.5, 0.3, 2.8, 0.82) +
+      gaussian(x, z, 4.2, -2.4, 2.5, 0.70) +
+      gaussian(x, z, -1.0, -9.0, 3.6, 0.95) +
+      gaussian(x, z, 5.0, -14.0, 3.1, 0.78) -
       gaussian(x, z, -2.0, -2.5, 1.7, 0.42) -
       gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
       gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
@@ -389,11 +398,11 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
     // La separación lateral del rover es cercana a 1.10 m; estos radios hacen
     // que suba una rueda mientras la rueda del lado opuesto permanece abajo.
     const singleWheelBumps =
-      gaussian(x, z, -0.55, 1.15, 0.46, 0.34) +
-      gaussian(x, z, 0.55, -0.75, 0.43, 0.38) +
-      gaussian(x, z, -0.55, -2.75, 0.44, 0.36) +
-      gaussian(x, z, 0.55, -4.80, 0.46, 0.40) +
-      gaussian(x, z, -0.55, -6.85, 0.42, 0.37);
+      gaussian(x, z, -0.55, 1.15, 0.52, 0.29) +
+      gaussian(x, z, 0.55, -0.75, 0.50, 0.32) +
+      gaussian(x, z, -0.55, -2.75, 0.51, 0.30) +
+      gaussian(x, z, 0.55, -4.80, 0.52, 0.33) +
+      gaussian(x, z, -0.55, -6.85, 0.49, 0.31);
 
     // Rugosidad de baja amplitud para que cada rueda encuentre alturas distintas.
     const fine =

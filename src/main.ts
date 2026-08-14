@@ -5,7 +5,10 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import RAPIER from "@dimforge/rapier3d-compat";
 
 const MODEL_URL = "/models/rover_web_optimizado_v2.glb";
-const FIXED_STEP = 1 / 60;
+const PHYSICS_HZ = 120;
+const FIXED_STEP = 1 / PHYSICS_HZ;
+const MAX_FRAME_DELTA = 0.08;
+const MAX_SUBSTEPS = 10;
 const WHEEL_RADIUS = 0.182;
 const SUSPENSION_REST = 0.17;
 const START = { x: 0, y: 0.62, z: 4.2 };
@@ -82,13 +85,19 @@ async function start() {
       .setTranslation(START.x, START.y, START.z)
       .setLinearDamping(0.18)
       .setAngularDamping(1.35)
-      .setAdditionalSolverIterations(8),
+      // El controlador raycast aplica fuerzas externas. Si Rapier duerme el
+      // chasis mientras el GLB termina de cargar, esas fuerzas pueden no
+      // arrancar el rover hasta hacer un reinicio manual.
+      .setCanSleep(false)
+      .setCcdEnabled(true)
+      .setAdditionalSolverIterations(12),
   );
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(0.43, 0.12, 0.46)
       .setTranslation(0, 0.06, 0)
       .setDensity(90)
-      .setFriction(1.1),
+      .setFriction(1.1)
+      .setRestitution(0),
     chassisBody,
   );
 
@@ -174,6 +183,9 @@ async function start() {
   const setPressed = (code: string, value: boolean) => {
     if (value) pressed.add(code);
     else pressed.delete(code);
+    if (value && ["KeyW", "KeyA", "KeyS", "KeyD"].includes(code)) {
+      chassisBody.wakeUp();
+    }
     document.querySelectorAll<HTMLButtonElement>(`[data-key="${code}"]`).forEach((button) => button.classList.toggle("active", value));
   };
 
@@ -184,11 +196,21 @@ async function start() {
   };
 
   const resetRover = () => {
+    ["KeyW", "KeyA", "KeyS", "KeyD"].forEach((code) => setPressed(code, false));
+    accumulator = 0;
     chassisBody.setTranslation(START, true);
     chassisBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
     chassisBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
     chassisBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     steering = 0;
+    leftRocker = 0;
+    rightRocker = 0;
+    for (let index = 0; index < 4; index += 1) {
+      vehicle.setWheelEngineForce(index, 0);
+      vehicle.setWheelBrake(index, 0);
+      vehicle.setWheelSteering(index, 0);
+    }
+    chassisBody.wakeUp();
   };
 
   window.addEventListener("keydown", (event) => {
@@ -201,6 +223,11 @@ async function start() {
   });
   window.addEventListener("keyup", (event) => setPressed(event.code, false));
   window.addEventListener("blur", () => ["KeyW", "KeyA", "KeyS", "KeyD"].forEach((code) => setPressed(code, false)));
+  document.addEventListener("visibilitychange", () => {
+    // Evita acumular un salto de tiempo al volver a la pestaña.
+    clock.getDelta();
+    if (!document.hidden) chassisBody.wakeUp();
+  });
   document.querySelectorAll<HTMLButtonElement>("[data-key]").forEach((button) => {
     const code = button.dataset.key!;
     const release = () => setPressed(code, false);
@@ -224,10 +251,14 @@ async function start() {
   const updateVehicle = (dt: number) => {
     const throttle = Number(pressed.has("KeyW")) - Number(pressed.has("KeyS"));
     const steerInput = Number(pressed.has("KeyA")) - Number(pressed.has("KeyD"));
-    steering = THREE.MathUtils.damp(steering, steerInput * 0.47, 7, dt);
     const speedNow = Math.abs(vehicle.currentVehicleSpeed());
+    const speedRatio = THREE.MathUtils.clamp(speedNow / 1.7, 0, 1);
+    const steeringLimit = THREE.MathUtils.lerp(0.47, 0.31, speedRatio);
+    steering = THREE.MathUtils.damp(steering, steerInput * steeringLimit, 7, dt);
     const engineForce = speedNow < 1.7 ? throttle * -38 : 0;
     const brake = throttle === 0 ? 1.5 : 0;
+
+    if (throttle !== 0 || steerInput !== 0) chassisBody.wakeUp();
 
     for (let index = 0; index < 4; index += 1) {
       vehicle.setWheelEngineForce(index, engineForce);
@@ -284,15 +315,27 @@ async function start() {
     }
   };
 
+  resetRover();
   ui.loading.classList.add("hidden");
+  console.info("[rover] simulación lista", {
+    physicsHz: PHYSICS_HZ,
+    model: MODEL_URL,
+    sleepingDisabled: true,
+    ccdEnabled: true,
+  });
 
   const animate = () => {
-    const delta = Math.min(clock.getDelta(), 0.08);
+    const delta = Math.min(clock.getDelta(), MAX_FRAME_DELTA);
     accumulator += delta;
-    while (accumulator >= FIXED_STEP) {
+    let substeps = 0;
+    while (accumulator >= FIXED_STEP && substeps < MAX_SUBSTEPS) {
       updateVehicle(FIXED_STEP);
       accumulator -= FIXED_STEP;
+      substeps += 1;
     }
+    // Si el navegador se bloqueó durante varios cuadros, se descarta el
+    // excedente para que Rapier no intente recuperar todo en un solo frame.
+    if (substeps === MAX_SUBSTEPS) accumulator = 0;
     updateVisuals(delta);
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
@@ -309,7 +352,7 @@ async function start() {
 
 function createTestTrack(scene: THREE.Scene, world: RAPIER.World) {
   const groundBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.08, -3));
-  world.createCollider(RAPIER.ColliderDesc.cuboid(12, 0.08, 17).setFriction(1.25), groundBody);
+  world.createCollider(RAPIER.ColliderDesc.cuboid(12, 0.08, 17).setFriction(1.25).setRestitution(0), groundBody);
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(24, 34, 1, 1),
     new THREE.MeshStandardMaterial({ color: 0x4a2116, roughness: 0.92, metalness: 0.02 }),
@@ -337,7 +380,10 @@ function createTestTrack(scene: THREE.Scene, world: RAPIER.World) {
         .setTranslation(position.x, position.y, position.z)
         .setRotation({ x: quaternion.x, y: quaternion.y, z: quaternion.z, w: quaternion.w }),
     );
-    world.createCollider(RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2).setFriction(1.2), body);
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2).setFriction(1.2).setRestitution(0),
+      body,
+    );
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(size.x, size.y, size.z),
       new THREE.MeshStandardMaterial({ color, roughness: 0.88 }),
@@ -365,7 +411,7 @@ function createTestTrack(scene: THREE.Scene, world: RAPIER.World) {
   ].forEach((position, index) => {
     const radius = 0.28 + index * 0.05;
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z));
-    world.createCollider(RAPIER.ColliderDesc.ball(radius * 0.8).setFriction(1.1), body);
+    world.createCollider(RAPIER.ColliderDesc.ball(radius * 0.8).setFriction(1.1).setRestitution(0), body);
     const rock = new THREE.Mesh(
       new THREE.DodecahedronGeometry(radius, 1),
       new THREE.MeshStandardMaterial({ color: 0x522419, roughness: 1 }),

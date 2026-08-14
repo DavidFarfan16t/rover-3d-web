@@ -12,12 +12,59 @@ const MAX_SUBSTEPS = 10;
 const WHEEL_RADIUS = 0.182;
 const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
+const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
+const ARTICULATION_VISUAL_GAIN = 1.55;
+
+const gaussian = (x: number, z: number, cx: number, cz: number, radius: number, height: number) => {
+  const dx = x - cx;
+  const dz = z - cz;
+  return height * Math.exp(-(dx * dx + dz * dz) / (2 * radius * radius));
+};
+
+const terrainHeight = (x: number, z: number) => {
+  const rolling =
+    Math.sin(x * 0.34 + z * 0.08) * 0.19 +
+    Math.cos(z * 0.25 - x * 0.05) * 0.17 +
+    Math.sin((x + z) * 0.43) * 0.09;
+
+  const formations =
+    gaussian(x, z, -4.5, 0.3, 2.8, 0.82) +
+    gaussian(x, z, 4.2, -2.4, 2.5, 0.70) +
+    gaussian(x, z, -1.0, -9.0, 3.6, 0.95) +
+    gaussian(x, z, 5.0, -14.0, 3.1, 0.78) -
+    gaussian(x, z, -2.0, -2.5, 1.7, 0.42) -
+    gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
+    gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
+
+  // Montículos estrechos, alternados sobre cada huella. La física no cambia:
+  // la amplificación visual de los balancines se aplica después al modelo GLB.
+  const singleWheelBumps =
+    gaussian(x, z, -0.55, 1.15, 0.52, 0.29) +
+    gaussian(x, z, 0.55, -0.75, 0.50, 0.32) +
+    gaussian(x, z, -0.55, -2.75, 0.51, 0.30) +
+    gaussian(x, z, 0.55, -4.80, 0.52, 0.33) +
+    gaussian(x, z, -0.55, -6.85, 0.49, 0.31);
+
+  const fine =
+    Math.sin(x * 1.37 + z * 0.71) * 0.028 +
+    Math.sin(x * 2.21 - z * 1.14) * 0.016;
+
+  const spawnDistance = Math.hypot(x - START.x, z - START.z);
+  const terrainBlend = THREE.MathUtils.smoothstep(spawnDistance, 1.35, 3.4);
+  return (rolling + formations + singleWheelBumps + fine) * terrainBlend;
+};
 
 type ControlBinding = {
   node: THREE.Object3D;
   base: THREE.Quaternion;
   axis: THREE.Vector3;
 };
+
+type Waypoint = { id: string; label: string; x: number; z: number };
+type MissionBlock =
+  | { id: string; type: "drive"; distance: number }
+  | { id: string; type: "turn"; angle: number }
+  | { id: string; type: "waypoint"; waypointId: string };
 
 const ui = {
   speed: document.querySelector<HTMLElement>("#speed")!,
@@ -31,6 +78,21 @@ const ui = {
   loadingStatus: document.querySelector<HTMLElement>("#loading-status")!,
   cameraButton: document.querySelector<HTMLButtonElement>("#camera-button")!,
   resetButton: document.querySelector<HTMLButtonElement>("#reset-button")!,
+  missionPlanner: document.querySelector<HTMLElement>("#mission-planner")!,
+  missionToggle: document.querySelector<HTMLButtonElement>("#mission-toggle")!,
+  missionStatus: document.querySelector<HTMLElement>("#mission-status")!,
+  missionMap: document.querySelector<HTMLCanvasElement>("#mission-map")!,
+  driveDistance: document.querySelector<HTMLInputElement>("#drive-distance")!,
+  turnAngle: document.querySelector<HTMLInputElement>("#turn-angle")!,
+  waypointSelect: document.querySelector<HTMLSelectElement>("#waypoint-select")!,
+  addDriveBlock: document.querySelector<HTMLButtonElement>("#add-drive-block")!,
+  addTurnBlock: document.querySelector<HTMLButtonElement>("#add-turn-block")!,
+  addWaypointBlock: document.querySelector<HTMLButtonElement>("#add-waypoint-block")!,
+  missionSequence: document.querySelector<HTMLOListElement>("#mission-sequence")!,
+  clearMission: document.querySelector<HTMLButtonElement>("#clear-mission")!,
+  missionPlay: document.querySelector<HTMLButtonElement>("#mission-play")!,
+  missionPause: document.querySelector<HTMLButtonElement>("#mission-pause")!,
+  missionStop: document.querySelector<HTMLButtonElement>("#mission-stop")!,
 };
 
 async function start() {
@@ -180,11 +242,402 @@ async function start() {
   const cameraTarget = new THREE.Vector3();
   const cameraDesired = new THREE.Vector3();
 
+  const makeId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const defaultWaypoints: Waypoint[] = [
+    { id: "wp-1", label: "WP1", x: -0.55, z: 1.15 },
+    { id: "wp-2", label: "WP2", x: 0.55, z: -0.75 },
+    { id: "wp-3", label: "WP3", x: -0.55, z: -2.75 },
+  ];
+  let waypoints: Waypoint[] = defaultWaypoints.map((point) => ({ ...point }));
+  let missionBlocks: MissionBlock[] = defaultWaypoints.map((point, index) => ({
+    id: `default-block-${index + 1}`,
+    type: "waypoint",
+    waypointId: point.id,
+  }));
+
+  try {
+    const stored = localStorage.getItem("rover-mission-v1");
+    if (stored) {
+      const parsed = JSON.parse(stored) as { waypoints?: Waypoint[]; blocks?: MissionBlock[] };
+      if (Array.isArray(parsed.waypoints) && parsed.waypoints.length) waypoints = parsed.waypoints;
+      if (Array.isArray(parsed.blocks)) missionBlocks = parsed.blocks;
+    }
+  } catch (error) {
+    console.warn("No se pudo recuperar la misión guardada", error);
+  }
+
+  const mission = {
+    running: false,
+    paused: false,
+    index: 0,
+    activeBlockId: "" as string,
+    startX: START.x,
+    startZ: START.z,
+    startForward: new THREE.Vector3(0, 0, -1),
+    targetForward: new THREE.Vector3(0, 0, -1),
+  };
+  const roverTrail: Array<{ x: number; z: number }> = [];
+  let missionMapElapsed = 0;
+  const missionMapContext = ui.missionMap.getContext("2d")!;
+  const missionMapBackground = document.createElement("canvas");
+  missionMapBackground.width = 320;
+  missionMapBackground.height = 210;
+
+  const saveMission = () => {
+    try {
+      localStorage.setItem("rover-mission-v1", JSON.stringify({ waypoints, blocks: missionBlocks }));
+    } catch (error) {
+      console.warn("No se pudo guardar la misión", error);
+    }
+  };
+
+  const setMissionStatus = (status: string, color = "") => {
+    ui.missionStatus.textContent = status;
+    ui.missionStatus.style.color = color;
+  };
+
+  const updateMissionButtons = () => {
+    ui.missionPlay.textContent = mission.running && mission.paused ? "▶ REANUDAR" : "▶ PLAY";
+    ui.missionPause.disabled = !mission.running || mission.paused;
+    ui.missionStop.disabled = !mission.running && mission.index === 0;
+  };
+
+  const blockLabel = (block: MissionBlock) => {
+    if (block.type === "drive") return `AVANZAR ${block.distance.toFixed(1)} m`;
+    if (block.type === "turn") return `GIRAR ${block.angle > 0 ? "+" : ""}${Math.round(block.angle)}°`;
+    const waypoint = waypoints.find((point) => point.id === block.waypointId);
+    return `IR A ${waypoint?.label ?? "WAYPOINT ELIMINADO"}`;
+  };
+
+  const renderWaypointOptions = () => {
+    const selected = ui.waypointSelect.value;
+    ui.waypointSelect.replaceChildren();
+    waypoints.forEach((waypoint) => {
+      const option = document.createElement("option");
+      option.value = waypoint.id;
+      option.textContent = waypoint.label;
+      ui.waypointSelect.append(option);
+    });
+    if (waypoints.some((point) => point.id === selected)) ui.waypointSelect.value = selected;
+  };
+
+  const renderMissionSequence = () => {
+    ui.missionSequence.replaceChildren();
+    if (!missionBlocks.length) {
+      const empty = document.createElement("li");
+      empty.className = "mission-empty";
+      empty.textContent = "Añade bloques para crear una misión.";
+      ui.missionSequence.append(empty);
+      return;
+    }
+
+    missionBlocks.forEach((block, index) => {
+      const item = document.createElement("li");
+      item.className = "mission-block";
+      if (mission.running && index === mission.index) item.classList.add("active");
+      if ((mission.running || mission.index > 0) && index < mission.index) item.classList.add("done");
+
+      const number = document.createElement("span");
+      number.className = "mission-block-number";
+      number.textContent = String(index + 1).padStart(2, "0");
+      const label = document.createElement("span");
+      label.textContent = blockLabel(block);
+      const actions = document.createElement("span");
+      actions.className = "mission-block-actions";
+
+      const moveUp = document.createElement("button");
+      moveUp.type = "button";
+      moveUp.textContent = "↑";
+      moveUp.title = "Subir bloque";
+      moveUp.disabled = index === 0;
+      moveUp.addEventListener("click", () => {
+        stopMission(false);
+        [missionBlocks[index - 1], missionBlocks[index]] = [missionBlocks[index], missionBlocks[index - 1]];
+        saveMission();
+        renderMissionSequence();
+      });
+
+      const moveDown = document.createElement("button");
+      moveDown.type = "button";
+      moveDown.textContent = "↓";
+      moveDown.title = "Bajar bloque";
+      moveDown.disabled = index === missionBlocks.length - 1;
+      moveDown.addEventListener("click", () => {
+        stopMission(false);
+        [missionBlocks[index + 1], missionBlocks[index]] = [missionBlocks[index], missionBlocks[index + 1]];
+        saveMission();
+        renderMissionSequence();
+      });
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.title = "Eliminar bloque";
+      remove.addEventListener("click", () => {
+        stopMission(false);
+        missionBlocks.splice(index, 1);
+        saveMission();
+        renderMissionSequence();
+      });
+
+      actions.append(moveUp, moveDown, remove);
+      item.append(number, label, actions);
+      ui.missionSequence.append(item);
+    });
+  };
+
+  const buildMissionMapBackground = () => {
+    const context = missionMapBackground.getContext("2d")!;
+    const image = context.createImageData(missionMapBackground.width, missionMapBackground.height);
+    const zMax = TERRAIN.centerZ + TERRAIN.depth / 2;
+    for (let py = 0; py < missionMapBackground.height; py += 1) {
+      for (let px = 0; px < missionMapBackground.width; px += 1) {
+        const x = -TERRAIN.width / 2 + (px / (missionMapBackground.width - 1)) * TERRAIN.width;
+        const z = zMax - (py / (missionMapBackground.height - 1)) * TERRAIN.depth;
+        const height = terrainHeight(x, z);
+        const shade = THREE.MathUtils.clamp(0.42 + height * 0.25, 0.18, 0.84);
+        const offset = (py * missionMapBackground.width + px) * 4;
+        image.data[offset] = 90 + shade * 105;
+        image.data[offset + 1] = 31 + shade * 54;
+        image.data[offset + 2] = 20 + shade * 30;
+        image.data[offset + 3] = 255;
+      }
+    }
+    context.putImageData(image, 0, 0);
+  };
+
+  const worldToMap = (x: number, z: number) => ({
+    x: ((x + TERRAIN.width / 2) / TERRAIN.width) * ui.missionMap.width,
+    y: ((TERRAIN.centerZ + TERRAIN.depth / 2 - z) / TERRAIN.depth) * ui.missionMap.height,
+  });
+
+  const drawMissionMap = (position: { x: number; z: number }, rotation: { x: number; y: number; z: number; w: number }) => {
+    const context = missionMapContext;
+    context.clearRect(0, 0, ui.missionMap.width, ui.missionMap.height);
+    context.drawImage(missionMapBackground, 0, 0, ui.missionMap.width, ui.missionMap.height);
+
+    context.strokeStyle = "rgba(245, 225, 205, .12)";
+    context.lineWidth = 1;
+    for (let division = 1; division < 8; division += 1) {
+      const x = (division / 8) * ui.missionMap.width;
+      context.beginPath(); context.moveTo(x, 0); context.lineTo(x, ui.missionMap.height); context.stroke();
+    }
+    for (let division = 1; division < 10; division += 1) {
+      const y = (division / 10) * ui.missionMap.height;
+      context.beginPath(); context.moveTo(0, y); context.lineTo(ui.missionMap.width, y); context.stroke();
+    }
+
+    const routePoints = missionBlocks
+      .filter((block): block is Extract<MissionBlock, { type: "waypoint" }> => block.type === "waypoint")
+      .map((block) => waypoints.find((point) => point.id === block.waypointId))
+      .filter((point): point is Waypoint => Boolean(point));
+    if (routePoints.length) {
+      const start = worldToMap(START.x, START.z);
+      context.beginPath();
+      context.moveTo(start.x, start.y);
+      routePoints.forEach((point) => {
+        const mapPoint = worldToMap(point.x, point.z);
+        context.lineTo(mapPoint.x, mapPoint.y);
+      });
+      context.setLineDash([9, 7]);
+      context.strokeStyle = "rgba(129, 217, 255, .7)";
+      context.lineWidth = 3;
+      context.stroke();
+      context.setLineDash([]);
+    }
+
+    if (roverTrail.length > 1) {
+      context.beginPath();
+      roverTrail.forEach((point, index) => {
+        const mapPoint = worldToMap(point.x, point.z);
+        if (index === 0) context.moveTo(mapPoint.x, mapPoint.y);
+        else context.lineTo(mapPoint.x, mapPoint.y);
+      });
+      context.strokeStyle = "rgba(101, 232, 166, .52)";
+      context.lineWidth = 3;
+      context.stroke();
+    }
+
+    const activeMissionBlock = missionBlocks[mission.index];
+    const activeWaypointId = activeMissionBlock?.type === "waypoint" ? activeMissionBlock.waypointId : "";
+    waypoints.forEach((waypoint, index) => {
+      const point = worldToMap(waypoint.x, waypoint.z);
+      context.beginPath();
+      context.arc(point.x, point.y, 11, 0, Math.PI * 2);
+      context.fillStyle = waypoint.id === activeWaypointId && mission.running ? "#65e8a6" : "#071019";
+      context.fill();
+      context.lineWidth = 3;
+      context.strokeStyle = "#81d9ff";
+      context.stroke();
+      context.fillStyle = waypoint.id === activeWaypointId && mission.running ? "#071019" : "#f4f0e7";
+      context.font = "600 16px Barlow Condensed, sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(String(index + 1), point.x, point.y + 1);
+    });
+
+    const roverPoint = worldToMap(position.x, position.z);
+    const roverRotation = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(roverRotation);
+    const mapAngle = Math.atan2(-forward.z, forward.x) + Math.PI / 2;
+    context.save();
+    context.translate(roverPoint.x, roverPoint.y);
+    context.rotate(mapAngle);
+    context.beginPath();
+    context.moveTo(0, -15);
+    context.lineTo(11, 12);
+    context.lineTo(0, 7);
+    context.lineTo(-11, 12);
+    context.closePath();
+    context.fillStyle = "#65e8a6";
+    context.fill();
+    context.strokeStyle = "#071019";
+    context.lineWidth = 2;
+    context.stroke();
+    context.restore();
+  };
+
+  buildMissionMapBackground();
+  renderWaypointOptions();
+  renderMissionSequence();
+
+  const getRoverForward = () => {
+    const rotation = chassisBody.rotation();
+    return new THREE.Vector3(0, 0, -1)
+      .applyQuaternion(new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w))
+      .setY(0)
+      .normalize();
+  };
+
+  const signedHeadingError = (forward: THREE.Vector3, target: THREE.Vector3) => {
+    const dot = THREE.MathUtils.clamp(forward.dot(target), -1, 1);
+    const crossY = forward.z * target.x - forward.x * target.z;
+    return Math.atan2(crossY, dot);
+  };
+
+  function stopMission(resetIndex = true, status = "DETENIDA") {
+    mission.running = false;
+    mission.paused = false;
+    mission.activeBlockId = "";
+    if (resetIndex) mission.index = 0;
+    setMissionStatus(status, status === "COMPLETA" ? "#65e8a6" : "");
+    updateMissionButtons();
+    renderMissionSequence();
+  }
+
+  function pauseMission(status = "PAUSADA") {
+    if (!mission.running || mission.paused) return;
+    mission.paused = true;
+    setMissionStatus(status, "#dfb85c");
+    updateMissionButtons();
+  }
+
+  function startMission() {
+    if (mission.running && mission.paused) {
+      mission.paused = false;
+      setMissionStatus(`BLOQUE ${mission.index + 1}/${missionBlocks.length}`, "#65e8a6");
+      updateMissionButtons();
+      chassisBody.wakeUp();
+      return;
+    }
+    if (!missionBlocks.length) {
+      setMissionStatus("SIN BLOQUES", "#dfb85c");
+      return;
+    }
+    resetRover(true);
+    mission.running = true;
+    mission.paused = false;
+    mission.index = 0;
+    mission.activeBlockId = "";
+    setMissionStatus(`BLOQUE 1/${missionBlocks.length}`, "#65e8a6");
+    updateMissionButtons();
+    renderMissionSequence();
+    chassisBody.wakeUp();
+  }
+
+  const completeMissionBlock = () => {
+    mission.index += 1;
+    mission.activeBlockId = "";
+    if (mission.index >= missionBlocks.length) {
+      stopMission(false, "COMPLETA");
+      return;
+    }
+    setMissionStatus(`BLOQUE ${mission.index + 1}/${missionBlocks.length}`, "#65e8a6");
+    renderMissionSequence();
+  };
+
+  const getMissionCommand = () => {
+    if (!mission.running || mission.paused) return { throttle: 0, steer: 0 };
+    const block = missionBlocks[mission.index];
+    if (!block) {
+      stopMission(false, "COMPLETA");
+      return { throttle: 0, steer: 0 };
+    }
+
+    const position = chassisBody.translation();
+    const forward = getRoverForward();
+    if (mission.activeBlockId !== block.id) {
+      mission.activeBlockId = block.id;
+      mission.startX = position.x;
+      mission.startZ = position.z;
+      mission.startForward.copy(forward);
+      mission.targetForward.copy(forward);
+      if (block.type === "turn") {
+        mission.targetForward.applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(block.angle));
+      }
+      renderMissionSequence();
+    }
+
+    if (block.type === "drive") {
+      const traveled = Math.hypot(position.x - mission.startX, position.z - mission.startZ);
+      const remaining = Math.max(0, block.distance - traveled);
+      if (remaining <= 0.08) {
+        completeMissionBlock();
+        return { throttle: 0, steer: 0 };
+      }
+      const headingError = signedHeadingError(forward, mission.startForward);
+      const steer = THREE.MathUtils.clamp(headingError / 0.42, -1, 1);
+      const throttle = remaining < 0.55 ? THREE.MathUtils.lerp(0.22, 0.48, remaining / 0.55) : 0.7;
+      return { throttle: Math.abs(headingError) > 0.85 ? 0.18 : throttle, steer };
+    }
+
+    if (block.type === "turn") {
+      const headingError = signedHeadingError(forward, mission.targetForward);
+      if (Math.abs(headingError) < THREE.MathUtils.degToRad(3.5)) {
+        completeMissionBlock();
+        return { throttle: 0, steer: 0 };
+      }
+      return {
+        throttle: Math.abs(headingError) > 0.2 ? 0.28 : 0.16,
+        steer: THREE.MathUtils.clamp(headingError / 0.38, -1, 1),
+      };
+    }
+
+    const waypoint = waypoints.find((point) => point.id === block.waypointId);
+    if (!waypoint) {
+      completeMissionBlock();
+      return { throttle: 0, steer: 0 };
+    }
+    const toTarget = new THREE.Vector3(waypoint.x - position.x, 0, waypoint.z - position.z);
+    const distance = toTarget.length();
+    if (distance < 0.43) {
+      completeMissionBlock();
+      return { throttle: 0, steer: 0 };
+    }
+    toTarget.normalize();
+    const headingError = signedHeadingError(forward, toTarget);
+    const steer = THREE.MathUtils.clamp(headingError / 0.48, -1, 1);
+    const approach = THREE.MathUtils.clamp(distance / 1.6, 0.32, 0.78);
+    const turnPenalty = THREE.MathUtils.clamp(1 - Math.abs(headingError) / 1.35, 0.12, 1);
+    return { throttle: approach * turnPenalty, steer };
+  };
+
   const setPressed = (code: string, value: boolean) => {
     if (value) pressed.add(code);
     else pressed.delete(code);
     if (value && ["KeyW", "KeyA", "KeyS", "KeyD"].includes(code)) {
       chassisBody.wakeUp();
+      pauseMission("CONTROL MANUAL");
     }
     document.querySelectorAll<HTMLButtonElement>(`[data-key="${code}"]`).forEach((button) => button.classList.toggle("active", value));
   };
@@ -195,7 +648,7 @@ async function start() {
     ui.cameraButton.textContent = `CÁMARA: ${followCamera ? "SEGUIMIENTO" : "ÓRBITA LIBRE"}`;
   };
 
-  const resetRover = () => {
+  const resetRover = (preserveMission = false) => {
     ["KeyW", "KeyA", "KeyS", "KeyD"].forEach((code) => setPressed(code, false));
     accumulator = 0;
     chassisBody.setTranslation(START, true);
@@ -205,6 +658,8 @@ async function start() {
     steering = 0;
     leftRocker = 0;
     rightRocker = 0;
+    roverTrail.length = 0;
+    if (!preserveMission) stopMission(true, "LISTA");
     for (let index = 0; index < 4; index += 1) {
       vehicle.setWheelEngineForce(index, 0);
       vehicle.setWheelBrake(index, 0);
@@ -214,6 +669,7 @@ async function start() {
   };
 
   window.addEventListener("keydown", (event) => {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement) return;
     if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
       event.preventDefault();
       setPressed(event.code, true);
@@ -240,7 +696,89 @@ async function start() {
     button.addEventListener("pointercancel", release);
   });
   ui.cameraButton.addEventListener("click", toggleCamera);
-  ui.resetButton.addEventListener("click", resetRover);
+  ui.resetButton.addEventListener("click", () => resetRover());
+
+  const redrawCurrentMap = () => drawMissionMap(chassisBody.translation(), chassisBody.rotation());
+  const appendBlock = (block: MissionBlock) => {
+    stopMission(true, "LISTA");
+    missionBlocks.push(block);
+    saveMission();
+    renderMissionSequence();
+    redrawCurrentMap();
+  };
+
+  ui.missionToggle.addEventListener("click", () => {
+    const collapsed = ui.missionPlanner.classList.toggle("collapsed");
+    ui.missionToggle.textContent = collapsed ? "+" : "−";
+    ui.missionToggle.setAttribute("aria-expanded", String(!collapsed));
+    ui.missionToggle.setAttribute("aria-label", collapsed ? "Mostrar planificador" : "Ocultar planificador");
+  });
+  ui.addDriveBlock.addEventListener("click", () => {
+    const distance = THREE.MathUtils.clamp(Number(ui.driveDistance.value) || 0, 0.2, 30);
+    ui.driveDistance.value = distance.toFixed(1);
+    appendBlock({ id: makeId("drive"), type: "drive", distance });
+  });
+  ui.addTurnBlock.addEventListener("click", () => {
+    const angle = THREE.MathUtils.clamp(Number(ui.turnAngle.value) || 0, -180, 180);
+    ui.turnAngle.value = String(Math.round(angle));
+    appendBlock({ id: makeId("turn"), type: "turn", angle });
+  });
+  ui.addWaypointBlock.addEventListener("click", () => {
+    if (!ui.waypointSelect.value) return;
+    appendBlock({ id: makeId("goto"), type: "waypoint", waypointId: ui.waypointSelect.value });
+  });
+  ui.clearMission.addEventListener("click", () => {
+    stopMission(true, "LISTA");
+    missionBlocks = [];
+    saveMission();
+    renderMissionSequence();
+    redrawCurrentMap();
+  });
+  ui.missionPlay.addEventListener("click", startMission);
+  ui.missionPause.addEventListener("click", () => pauseMission());
+  ui.missionStop.addEventListener("click", () => stopMission(true, "DETENIDA"));
+  ui.missionMap.addEventListener("click", (event) => {
+    const rect = ui.missionMap.getBoundingClientRect();
+    const u = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const v = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    const waypoint: Waypoint = {
+      id: makeId("wp"),
+      label: `WP${waypoints.length + 1}`,
+      x: -TERRAIN.width / 2 + u * TERRAIN.width,
+      z: TERRAIN.centerZ + TERRAIN.depth / 2 - v * TERRAIN.depth,
+    };
+    waypoints.push(waypoint);
+    saveMission();
+    renderWaypointOptions();
+    ui.waypointSelect.value = waypoint.id;
+    redrawCurrentMap();
+  });
+  ui.missionMap.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const rect = ui.missionMap.getBoundingClientRect();
+    const u = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const v = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    const x = -TERRAIN.width / 2 + u * TERRAIN.width;
+    const z = TERRAIN.centerZ + TERRAIN.depth / 2 - v * TERRAIN.depth;
+    let nearestIndex = -1;
+    let nearestDistance = 1.15;
+    waypoints.forEach((point, index) => {
+      const distance = Math.hypot(point.x - x, point.z - z);
+      if (distance < nearestDistance) {
+        nearestIndex = index;
+        nearestDistance = distance;
+      }
+    });
+    if (nearestIndex < 0) return;
+    stopMission(true, "LISTA");
+    const [removed] = waypoints.splice(nearestIndex, 1);
+    missionBlocks = missionBlocks.filter((block) => block.type !== "waypoint" || block.waypointId !== removed.id);
+    waypoints.forEach((point, index) => { point.label = `WP${index + 1}`; });
+    saveMission();
+    renderWaypointOptions();
+    renderMissionSequence();
+    redrawCurrentMap();
+  });
 
   const applyBinding = (binding: ControlBinding | null, angle: number) => {
     if (!binding) return;
@@ -249,14 +787,18 @@ async function start() {
   };
 
   const updateVehicle = (dt: number) => {
-    const throttle = Number(pressed.has("KeyW")) - Number(pressed.has("KeyS"));
-    const steerInput = Number(pressed.has("KeyA")) - Number(pressed.has("KeyD"));
+    const manualThrottle = Number(pressed.has("KeyW")) - Number(pressed.has("KeyS"));
+    const manualSteer = Number(pressed.has("KeyA")) - Number(pressed.has("KeyD"));
+    const autonomous = getMissionCommand();
+    const autopilotActive = mission.running && !mission.paused;
+    const throttle = autopilotActive ? autonomous.throttle : manualThrottle;
+    const steerInput = autopilotActive ? autonomous.steer : manualSteer;
     const speedNow = Math.abs(vehicle.currentVehicleSpeed());
     const speedRatio = THREE.MathUtils.clamp(speedNow / 1.7, 0, 1);
     const steeringLimit = THREE.MathUtils.lerp(0.47, 0.31, speedRatio);
     steering = THREE.MathUtils.damp(steering, steerInput * steeringLimit, 7, dt);
     const engineForce = speedNow < 1.7 ? throttle * -38 : 0;
-    const brake = throttle === 0 ? 1.5 : 0;
+    const brake = Math.abs(throttle) < 0.01 ? (autopilotActive ? 3.4 : 1.5) : 0;
 
     if (throttle !== 0 || steerInput !== 0) chassisBody.wakeUp();
 
@@ -281,21 +823,21 @@ async function start() {
     const lengths = [0, 1, 2, 3].map((index) => vehicle.wheelSuspensionLength(index) ?? SUSPENSION_REST);
     const sideWheelbase = Math.abs(wheelConnections[2].z - wheelConnections[0].z);
     const leftTarget = THREE.MathUtils.clamp(
-      Math.atan2(lengths[2] - lengths[0], sideWheelbase),
-      -0.46,
-      0.46,
+      Math.atan2(lengths[2] - lengths[0], sideWheelbase) * ARTICULATION_VISUAL_GAIN,
+      -0.52,
+      0.52,
     );
     const rightTarget = THREE.MathUtils.clamp(
-      Math.atan2(lengths[1] - lengths[3], sideWheelbase),
-      -0.46,
-      0.46,
+      Math.atan2(lengths[1] - lengths[3], sideWheelbase) * ARTICULATION_VISUAL_GAIN,
+      -0.52,
+      0.52,
     );
-    leftRocker = THREE.MathUtils.damp(leftRocker, leftTarget, 9, dt);
-    rightRocker = THREE.MathUtils.damp(rightRocker, rightTarget, 9, dt);
+    leftRocker = THREE.MathUtils.damp(leftRocker, leftTarget, 12, dt);
+    rightRocker = THREE.MathUtils.damp(rightRocker, rightTarget, 12, dt);
     applyBinding(suspensionControls[0], leftRocker);
     applyBinding(suspensionControls[1], rightRocker);
     if (differential && differentialBase) {
-      tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (leftRocker - rightRocker) * 0.42);
+      tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (leftRocker - rightRocker) * 0.52);
       differential.quaternion.copy(differentialBase).premultiply(tempQuaternion);
     }
 
@@ -310,6 +852,17 @@ async function start() {
     ui.suspensionRight.textContent = `${Math.round(rightCompression)} mm`;
     ui.barLeft.style.width = `${THREE.MathUtils.clamp(leftCompression / 1.4, 4, 100)}%`;
     ui.barRight.style.width = `${THREE.MathUtils.clamp(rightCompression / 1.4, 4, 100)}%`;
+
+    const lastTrailPoint = roverTrail.at(-1);
+    if (!lastTrailPoint || Math.hypot(position.x - lastTrailPoint.x, position.z - lastTrailPoint.z) > 0.18) {
+      roverTrail.push({ x: position.x, z: position.z });
+      if (roverTrail.length > 480) roverTrail.shift();
+    }
+    missionMapElapsed += dt;
+    if (missionMapElapsed >= 0.1) {
+      missionMapElapsed = 0;
+      drawMissionMap(position, rotation);
+    }
 
     if (followCamera) {
       orbit.enabled = false;
@@ -360,9 +913,7 @@ async function start() {
 }
 
 function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
-  const width = 28;
-  const depth = 44;
-  const centerZ = -5;
+  const { width, depth, centerZ } = TERRAIN;
   const xSegments = 84;
   const zSegments = 132;
   const rowSize = xSegments + 1;
@@ -370,50 +921,6 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
   const vertices = new Float32Array(vertexCount * 3);
   const colors = new Float32Array(vertexCount * 3);
   const indices = new Uint32Array(xSegments * zSegments * 6);
-
-  const gaussian = (x: number, z: number, cx: number, cz: number, radius: number, height: number) => {
-    const dx = x - cx;
-    const dz = z - cz;
-    return height * Math.exp(-(dx * dx + dz * dz) / (2 * radius * radius));
-  };
-
-  const terrainHeight = (x: number, z: number) => {
-    // Ondulación continua de gran escala: evita el aspecto de plano con piezas encima.
-    const rolling =
-      Math.sin(x * 0.34 + z * 0.08) * 0.19 +
-      Math.cos(z * 0.25 - x * 0.05) * 0.17 +
-      Math.sin((x + z) * 0.43) * 0.09;
-
-    // Lomas amplias y depresiones suaves distribuidas por el campo de pruebas.
-    const formations =
-      gaussian(x, z, -4.5, 0.3, 2.8, 0.82) +
-      gaussian(x, z, 4.2, -2.4, 2.5, 0.70) +
-      gaussian(x, z, -1.0, -9.0, 3.6, 0.95) +
-      gaussian(x, z, 5.0, -14.0, 3.1, 0.78) -
-      gaussian(x, z, -2.0, -2.5, 1.7, 0.42) -
-      gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
-      gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
-
-    // Montículos estrechos alternados sobre las huellas de las ruedas.
-    // La separación lateral del rover es cercana a 1.10 m; estos radios hacen
-    // que suba una rueda mientras la rueda del lado opuesto permanece abajo.
-    const singleWheelBumps =
-      gaussian(x, z, -0.55, 1.15, 0.52, 0.29) +
-      gaussian(x, z, 0.55, -0.75, 0.50, 0.32) +
-      gaussian(x, z, -0.55, -2.75, 0.51, 0.30) +
-      gaussian(x, z, 0.55, -4.80, 0.52, 0.33) +
-      gaussian(x, z, -0.55, -6.85, 0.49, 0.31);
-
-    // Rugosidad de baja amplitud para que cada rueda encuentre alturas distintas.
-    const fine =
-      Math.sin(x * 1.37 + z * 0.71) * 0.028 +
-      Math.sin(x * 2.21 - z * 1.14) * 0.016;
-
-    // Plataforma de aparición integrada en el terreno, con transición gradual.
-    const spawnDistance = Math.hypot(x - START.x, z - START.z);
-    const terrainBlend = THREE.MathUtils.smoothstep(spawnDistance, 1.35, 3.4);
-    return (rolling + formations + singleWheelBumps + fine) * terrainBlend;
-  };
 
   let vertexOffset = 0;
   const darkSand = new THREE.Color(0x6f2417);

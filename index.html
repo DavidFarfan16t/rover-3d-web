@@ -38,6 +38,67 @@
         <button id="reset-button" class="panel-button secondary" type="button">REINICIAR ROVER</button>
       </aside>
 
+      <aside id="mission-planner" class="mission-planner" aria-label="Planificador de misión">
+        <header class="mission-header">
+          <div>
+            <p class="eyebrow">NAVEGACIÓN AUTÓNOMA</p>
+            <h2>Plan de misión</h2>
+          </div>
+          <button id="mission-toggle" class="mission-icon-button" type="button" aria-label="Ocultar planificador" aria-expanded="true">−</button>
+        </header>
+
+        <div class="mission-body">
+          <div class="mission-status-row">
+            <span>ESTADO</span>
+            <strong id="mission-status">LISTA</strong>
+          </div>
+
+          <div class="mission-map-frame">
+            <canvas id="mission-map" width="640" height="420" aria-label="Mapa superior del campo de pruebas"></canvas>
+            <p>Clic: crear · clic derecho: borrar</p>
+          </div>
+
+          <section class="block-builder" aria-label="Añadir instrucciones">
+            <h3>BLOQUES</h3>
+            <div class="block-row">
+              <span class="block-symbol">↑</span>
+              <label for="drive-distance">AVANZAR</label>
+              <input id="drive-distance" type="number" min="0.2" max="30" step="0.1" value="2" inputmode="decimal">
+              <span>m</span>
+              <button id="add-drive-block" type="button" aria-label="Añadir bloque avanzar">+</button>
+            </div>
+            <div class="block-row">
+              <span class="block-symbol">↶</span>
+              <label for="turn-angle">GIRAR</label>
+              <input id="turn-angle" type="number" min="-180" max="180" step="5" value="45" inputmode="decimal">
+              <span>°</span>
+              <button id="add-turn-block" type="button" aria-label="Añadir bloque girar">+</button>
+            </div>
+            <div class="block-row block-row-waypoint">
+              <span class="block-symbol">◎</span>
+              <label for="waypoint-select">IR A</label>
+              <select id="waypoint-select" aria-label="Seleccionar waypoint"></select>
+              <button id="add-waypoint-block" type="button" aria-label="Añadir bloque ir a waypoint">+</button>
+            </div>
+          </section>
+
+          <section class="mission-program" aria-label="Secuencia programada">
+            <div class="mission-program-heading">
+              <h3>PROGRAMA</h3>
+              <button id="clear-mission" class="mission-text-button" type="button">BORRAR</button>
+            </div>
+            <ol id="mission-sequence" class="mission-sequence"></ol>
+          </section>
+
+          <div class="mission-actions">
+            <button id="mission-play" class="mission-action primary" type="button">▶ PLAY</button>
+            <button id="mission-pause" class="mission-action" type="button" disabled>Ⅱ PAUSA</button>
+            <button id="mission-stop" class="mission-action" type="button" disabled>■ STOP</button>
+          </div>
+          <p class="mission-note">Giro positivo = izquierda · negativo = derecha</p>
+        </div>
+      </aside>
+
       <section class="instructions">
         <p class="eyebrow">CAMPO DE PRUEBAS · V0.1</p>
         <h1>Suspensión bajo carga.</h1>

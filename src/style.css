@@ -9,6 +9,8 @@
   --panel: rgba(5, 10, 15, 0.82);
   --blue: #57b7ed;
   --orange: #db6d35;
+  --green: #65e8a6;
+  --paper: #f4f0e7;
 }
 
 * { box-sizing: border-box; }
@@ -52,6 +54,69 @@ button, a { color: inherit; font: inherit; }
 .panel-button:hover { background: rgba(87,183,237,.18); }
 .panel-button.secondary { color: #9caab3; border-color: var(--line); background: transparent; }
 
+.mission-planner {
+  position: fixed; z-index: 8; top: 96px; left: 28px;
+  width: min(330px, calc(100vw - 56px)); max-height: calc(100vh - 190px);
+  overflow: hidden auto; border: 1px solid var(--line); background: rgba(5,10,15,.92);
+  box-shadow: 0 22px 70px rgba(0,0,0,.26); backdrop-filter: blur(12px);
+  scrollbar-width: thin; scrollbar-color: rgba(127,214,255,.3) transparent;
+}
+.mission-header {
+  position: sticky; z-index: 2; top: 0; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 16px 18px 14px; border-bottom: 1px solid var(--line); background: rgba(5,10,15,.97);
+}
+.mission-header .eyebrow { margin-bottom: 0; }
+.mission-header h2 { margin: 4px 0 0; color: var(--paper); font: 600 25px/1 "Barlow Condensed"; }
+.mission-icon-button, .mission-text-button, .block-row button, .mission-action {
+  border: 1px solid rgba(129,217,255,.3); color: var(--paper); background: transparent; cursor: pointer;
+}
+.mission-icon-button { width: 32px; height: 32px; font-size: 18px; }
+.mission-icon-button:hover, .mission-text-button:hover, .block-row button:hover, .mission-action:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.mission-planner.collapsed { max-height: none; overflow: hidden; }
+.mission-planner.collapsed .mission-body { display: none; }
+.mission-body { padding: 14px 16px 16px; }
+.mission-status-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: #7e919e; font: 500 9px/1 "Barlow Condensed"; letter-spacing: .16em; }
+.mission-status-row strong { color: var(--green); font-weight: 600; }
+.mission-map-frame { position: relative; overflow: hidden; border: 1px solid rgba(129,217,255,.18); background: #11100d; }
+#mission-map { display: block; width: 100%; height: 190px; cursor: crosshair; }
+.mission-map-frame > p { position: absolute; right: 8px; bottom: 7px; margin: 0; padding: 4px 6px; color: rgba(244,240,231,.68); background: rgba(4,7,10,.72); font-size: 8px; letter-spacing: .08em; pointer-events: none; }
+.block-builder, .mission-program { margin-top: 14px; }
+.block-builder h3, .mission-program h3 { margin: 0 0 7px; color: #7e919e; font: 500 9px/1 "Barlow Condensed"; letter-spacing: .18em; }
+.block-row {
+  display: grid; grid-template-columns: 24px 1fr 58px 14px 30px; min-height: 34px; align-items: center;
+  gap: 5px; margin-top: 5px; padding: 4px 5px; border-left: 2px solid #c96c3d;
+  background: rgba(255,255,255,.045); color: rgba(244,240,231,.7); font: 500 9px/1 "Barlow Condensed"; letter-spacing: .08em;
+}
+.block-row:nth-of-type(3) { border-left-color: #dfb85c; }
+.block-row-waypoint { grid-template-columns: 24px 42px 1fr 30px; border-left-color: var(--blue); }
+.block-symbol { color: var(--paper); font-size: 16px; text-align: center; }
+.block-row input, .block-row select {
+  min-width: 0; height: 25px; border: 1px solid rgba(244,240,231,.18); border-radius: 0; outline: none;
+  color: var(--paper); background: rgba(0,0,0,.38); font: 11px "IBM Plex Mono", monospace; text-align: center;
+}
+.block-row select { padding: 0 5px; text-align: left; }
+.block-row button { width: 28px; height: 27px; font-size: 16px; }
+.mission-program-heading { display: flex; align-items: center; justify-content: space-between; }
+.mission-text-button { border: 0; color: #7e919e; font: 500 8px/1 "Barlow Condensed"; letter-spacing: .14em; }
+.mission-sequence { display: grid; gap: 5px; max-height: 154px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.mission-block, .mission-empty {
+  display: grid; grid-template-columns: 22px 1fr auto; align-items: center; min-height: 34px; padding: 5px 6px;
+  border: 1px solid rgba(244,240,231,.1); border-left: 2px solid rgba(129,217,255,.4);
+  color: rgba(244,240,231,.78); background: rgba(255,255,255,.025); font: 500 9px/1.2 "Barlow Condensed"; letter-spacing: .07em;
+}
+.mission-block.active { border-color: rgba(101,232,166,.48); border-left-color: var(--green); color: var(--paper); background: rgba(101,232,166,.07); }
+.mission-block.done { opacity: .45; }
+.mission-empty { display: block; padding: 10px; color: #7e919e; text-align: center; }
+.mission-block-number { color: #7e919e; }
+.mission-block-actions { display: flex; gap: 2px; }
+.mission-block-actions button { width: 22px; height: 22px; padding: 0; border: 0; color: #7e919e; background: transparent; cursor: pointer; }
+.mission-block-actions button:hover { color: var(--blue); }
+.mission-actions { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 5px; margin-top: 14px; }
+.mission-action { min-height: 34px; padding: 0 6px; color: #8fa2af; font: 600 9px/1 "Barlow Condensed"; letter-spacing: .1em; }
+.mission-action.primary { border-color: rgba(101,232,166,.55); color: var(--green); background: rgba(101,232,166,.06); }
+.mission-action:disabled { opacity: .34; cursor: default; }
+.mission-note { margin: 8px 0 0; color: rgba(244,240,231,.38); font-size: 8px; letter-spacing: .06em; text-align: center; }
+
 .instructions { position: fixed; z-index: 8; left: 34px; bottom: 34px; width: min(380px, calc(100vw - 68px)); pointer-events: none; }
 .instructions h1 { margin: 0 0 10px; font: 500 clamp(34px, 4vw, 58px)/.96 "Barlow Condensed"; letter-spacing: -.02em; }
 .instructions > p:last-child { margin: 0; max-width: 360px; color: #a1b0b9; font-size: 12px; line-height: 1.65; }
@@ -71,9 +136,16 @@ button, a { color: inherit; font: inherit; }
 .loading strong { font: 600 13px/1 "Barlow Condensed"; letter-spacing: .2em; }.loading span { color: #758995; font-size: 10px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+@media (min-width: 1000px) {
+  .mission-planner:not(.collapsed) ~ .instructions { left: 382px; width: min(340px, calc(100vw - 780px)); }
+}
+
 @media (max-width: 760px) {
   .topbar { height: 62px; padding: 0 16px; }.status span { display: none; }
   .telemetry { top: 74px; right: 12px; width: 180px; padding: 15px; }.metric-main strong { font-size: 40px; }
+  .mission-planner { top: 74px; left: 12px; width: calc(100vw - 24px); max-height: 57vh; }
+  .mission-planner:not(.collapsed) ~ .instructions { display: none; }
+  #mission-map { height: 160px; }
   .instructions { left: 18px; bottom: 142px; width: 240px; }.instructions h1 { font-size: 34px; }.instructions > p:last-child { display: none; }
   .controls { bottom: 15px; }.controls button { width: 52px; height: 47px; }
 }

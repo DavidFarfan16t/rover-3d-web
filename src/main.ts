@@ -307,7 +307,10 @@ async function start() {
 
   const blockLabel = (block: MissionBlock) => {
     if (block.type === "drive") return `AVANZAR ${block.distance.toFixed(1)} m`;
-    if (block.type === "turn") return `GIRAR ${block.angle > 0 ? "+" : ""}${Math.round(block.angle)}°`;
+    if (block.type === "turn") {
+      if (Math.abs(block.angle) < 0.01) return "GIRAR 0°";
+      return `GIRAR ${block.angle > 0 ? "DER." : "IZQ."} ${Math.abs(Math.round(block.angle))}°`;
+    }
     const waypoint = waypoints.find((point) => point.id === block.waypointId);
     return waypoint
       ? `IR A ${waypoint.label} · X ${waypoint.x.toFixed(1)} · Z ${waypoint.z.toFixed(1)}`
@@ -701,7 +704,8 @@ async function start() {
       mission.startForward.copy(forward);
       mission.targetForward.copy(forward);
       if (block.type === "turn") {
-        mission.targetForward.applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(block.angle));
+        // Convención del programador: grados positivos giran a la derecha.
+        mission.targetForward.applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(-block.angle));
       }
       renderMissionSequence();
     }

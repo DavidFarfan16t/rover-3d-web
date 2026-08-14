@@ -67,7 +67,7 @@ El mapa usa el mismo sistema de unidades que la simulación:
 1. Haz clic sobre el mapa para crear uno o varios waypoints. Las coordenadas se guardan con precisión de 0,1 m. Con clic derecho sobre un waypoint puedes eliminarlo.
 2. Construye el programa con los botones `+` de los bloques:
    - **Avanzar:** recorre la cantidad indicada de metros manteniendo el rumbo inicial del bloque.
-   - **Girar:** usa grados positivos para girar a la izquierda y negativos para girar a la derecha.
+   - **Girar:** usa grados positivos para girar a la derecha y negativos para girar a la izquierda. Por ejemplo, `90°` gira a la derecha y `−90°` gira a la izquierda.
    - **Ir a:** selecciona un waypoint y el rover corrige automáticamente su dirección hasta alcanzarlo.
 3. Ordena los bloques con las flechas o elimínalos con `×`.
 4. Pulsa **Play**. El rover vuelve al punto de inicio y ejecuta la secuencia completa.

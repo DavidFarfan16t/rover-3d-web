@@ -26,6 +26,9 @@ Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para
 - Cualquier control de conducción despierta explícitamente el cuerpo físico.
 - La detección continua de colisiones (CCD) reduce penetraciones al atravesar obstáculos.
 - La dirección máxima disminuye con la velocidad para reducir vuelcos poco realistas.
+- La masa física se aproxima a 50 kg y el centro de masa está ligeramente rebajado para evitar caballitos.
+- La fuerza de los motores entra mediante una rampa; no pasa instantáneamente de cero al máximo.
+- El piloto automático reduce su velocidad durante el último metro y aplica un freno progresivo antes de cada waypoint.
 - El reinicio limpia velocidad, giro, fuerzas, frenos y estado visual de la suspensión.
 
 El vehículo actual utiliza un controlador de ruedas por **ray casting**: cada rueda física

@@ -14,6 +14,12 @@ const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
 const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
 const ARTICULATION_VISUAL_GAIN = 1.55;
+const MAX_DRIVE_SPEED = 1.5;
+const MAX_ENGINE_FORCE = 34;
+const THROTTLE_RISE_RATE = 0.82;
+const THROTTLE_FALL_RATE = 2.2;
+const AUTOPILOT_BRAKE = 0.9;
+const MANUAL_BRAKE = 0.65;
 
 const gaussian = (x: number, z: number, cx: number, cz: number, radius: number, height: number) => {
   const dx = x - cx;
@@ -34,8 +40,7 @@ const terrainHeight = (x: number, z: number) => {
     gaussian(x, z, 5.0, -14.0, 3.1, 0.78) -
     gaussian(x, z, -2.0, -2.5, 1.7, 0.42) -
     gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
-    gaussian(x, z, -5.0, -13.0, 2.5, 0.55)+
-    gaussian(x, z,  7, -10.0,  0.5,  5.0);
+    gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
 
   // Montículos estrechos, alternados sobre cada huella. La física no cambia:
   // la amplificación visual de los balancines se aplica después al modelo GLB.
@@ -66,6 +71,7 @@ type MissionBlock =
   | { id: string; type: "drive"; distance: number }
   | { id: string; type: "turn"; angle: number }
   | { id: string; type: "waypoint"; waypointId: string };
+type DriveCommand = { throttle: number; steer: number; brake: number };
 
 const ui = {
   speed: document.querySelector<HTMLElement>("#speed")!,
@@ -148,7 +154,7 @@ async function start() {
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(START.x, START.y, START.z)
       .setLinearDamping(0.18)
-      .setAngularDamping(2.1)
+      .setAngularDamping(2.35)
       // El controlador raycast aplica fuerzas externas. Si Rapier duerme el
       // chasis mientras el GLB termina de cargar, esas fuerzas pueden no
       // arrancar el rover hasta hacer un reinicio manual.
@@ -158,8 +164,10 @@ async function start() {
   );
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(0.43, 0.12, 0.46)
-      .setTranslation(0, -0.04, 0)
-      .setDensity(90)
+      // Aproxima los 50 kg del rover real y baja ligeramente el centro de
+      // masa para reducir caballitos sin impedir que copie el terreno.
+      .setTranslation(0, -0.10, 0)
+      .setDensity(240)
       .setFriction(1.1)
       .setRestitution(0),
     chassisBody,
@@ -235,6 +243,8 @@ async function start() {
 
   const pressed = new Set<string>();
   let steering = 0;
+  let driveThrottle = 0;
+  let driveBrake = 0;
   let leftRocker = 0;
   let rightRocker = 0;
   let followCamera = true;
@@ -688,12 +698,12 @@ async function start() {
     renderMissionSequence();
   };
 
-  const getMissionCommand = () => {
-    if (!mission.running || mission.paused) return { throttle: 0, steer: 0 };
+  const getMissionCommand = (): DriveCommand => {
+    if (!mission.running || mission.paused) return { throttle: 0, steer: 0, brake: 0 };
     const block = missionBlocks[mission.index];
     if (!block) {
       stopMission(false, "COMPLETA");
-      return { throttle: 0, steer: 0 };
+      return { throttle: 0, steer: 0, brake: 0 };
     }
 
     const position = chassisBody.translation();
@@ -714,45 +724,54 @@ async function start() {
     if (block.type === "drive") {
       const traveled = Math.hypot(position.x - mission.startX, position.z - mission.startZ);
       const remaining = Math.max(0, block.distance - traveled);
-      if (remaining <= 0.08) {
+      const speed = Math.abs(vehicle.currentVehicleSpeed());
+      if (remaining <= 0.10 && speed <= 0.14) {
         completeMissionBlock();
-        return { throttle: 0, steer: 0 };
+        return { throttle: 0, steer: 0, brake: 0 };
       }
       const headingError = signedHeadingError(forward, mission.startForward);
       const steer = THREE.MathUtils.clamp(headingError / 0.42, -1, 1);
-      const throttle = remaining < 0.55 ? THREE.MathUtils.lerp(0.22, 0.48, remaining / 0.55) : 0.7;
-      return { throttle: Math.abs(headingError) > 0.85 ? 0.18 : throttle, steer };
+      const targetSpeed = THREE.MathUtils.clamp(Math.max(0, remaining - 0.06) * 1.05, 0, 0.95);
+      const throttle = THREE.MathUtils.clamp((targetSpeed - speed) * 1.35, 0, 0.62);
+      const brake = THREE.MathUtils.clamp((speed - targetSpeed - 0.05) * 2.0, 0, 1);
+      return { throttle: Math.abs(headingError) > 0.85 ? Math.min(0.14, throttle) : throttle, steer, brake };
     }
 
     if (block.type === "turn") {
       const headingError = signedHeadingError(forward, mission.targetForward);
       if (Math.abs(headingError) < THREE.MathUtils.degToRad(3.5)) {
         completeMissionBlock();
-        return { throttle: 0, steer: 0 };
+        return { throttle: 0, steer: 0, brake: 0 };
       }
       return {
         throttle: Math.abs(headingError) > 0.2 ? 0.28 : 0.16,
         steer: THREE.MathUtils.clamp(headingError / 0.38, -1, 1),
+        brake: 0,
       };
     }
 
     const waypoint = waypoints.find((point) => point.id === block.waypointId);
     if (!waypoint) {
       completeMissionBlock();
-      return { throttle: 0, steer: 0 };
+      return { throttle: 0, steer: 0, brake: 0 };
     }
     const toTarget = new THREE.Vector3(waypoint.x - position.x, 0, waypoint.z - position.z);
     const distance = toTarget.length();
-    if (distance < 0.43) {
+    const speed = Math.abs(vehicle.currentVehicleSpeed());
+    if (distance < 0.34 && speed < 0.14) {
       completeMissionBlock();
-      return { throttle: 0, steer: 0 };
+      return { throttle: 0, steer: 0, brake: 0 };
     }
     toTarget.normalize();
     const headingError = signedHeadingError(forward, toTarget);
     const steer = THREE.MathUtils.clamp(headingError / 0.48, -1, 1);
-    const approach = THREE.MathUtils.clamp(distance / 1.6, 0.32, 0.78);
+    // La velocidad objetivo cae progresivamente durante el último metro. Si
+    // el rover llega más rápido de lo debido, deja de empujar y frena suave.
+    const targetSpeed = THREE.MathUtils.clamp(Math.max(0, distance - 0.28) * 0.82, 0, 0.92);
+    const approach = THREE.MathUtils.clamp((targetSpeed - speed) * 1.4, 0, 0.60);
+    const brake = THREE.MathUtils.clamp((speed - targetSpeed - 0.05) * 2.0, 0, 1);
     const turnPenalty = THREE.MathUtils.clamp(1 - Math.abs(headingError) / 1.35, 0.12, 1);
-    return { throttle: approach * turnPenalty, steer };
+    return { throttle: approach * turnPenalty, steer, brake };
   };
 
   const setPressed = (code: string, value: boolean) => {
@@ -779,6 +798,8 @@ async function start() {
     chassisBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
     chassisBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     steering = 0;
+    driveThrottle = 0;
+    driveBrake = 0;
     leftRocker = 0;
     rightRocker = 0;
     roverTrail.length = 0;
@@ -913,25 +934,38 @@ async function start() {
     binding.node.quaternion.copy(binding.base).premultiply(tempQuaternion);
   };
 
+  const moveTowards = (current: number, target: number, maxDelta: number) => {
+    if (current < target) return Math.min(current + maxDelta, target);
+    return Math.max(current - maxDelta, target);
+  };
+
   const updateVehicle = (dt: number) => {
     const manualThrottle = Number(pressed.has("KeyW")) - Number(pressed.has("KeyS"));
     const manualSteer = Number(pressed.has("KeyA")) - Number(pressed.has("KeyD"));
     const autonomous = getMissionCommand();
     const autopilotActive = mission.running && !mission.paused;
-    const throttle = autopilotActive ? autonomous.throttle : manualThrottle;
+    const requestedThrottle = autopilotActive ? autonomous.throttle : manualThrottle;
     const steerInput = autopilotActive ? autonomous.steer : manualSteer;
     const speedNow = Math.abs(vehicle.currentVehicleSpeed());
-    const speedRatio = THREE.MathUtils.clamp(speedNow / 1.7, 0, 1);
+    const speedRatio = THREE.MathUtils.clamp(speedNow / MAX_DRIVE_SPEED, 0, 1);
     const steeringLimit = THREE.MathUtils.lerp(0.47, 0.31, speedRatio);
     steering = THREE.MathUtils.damp(steering, steerInput * steeringLimit, 7, dt);
-    const engineForce = speedNow < 1.7 ? throttle * -38 : 0;
-    const brake = Math.abs(throttle) < 0.01 ? (autopilotActive ? 3.4 : 1.5) : 0;
+    const sameDirection = Math.sign(requestedThrottle) === Math.sign(driveThrottle) || Math.abs(driveThrottle) < 0.001;
+    const increasing = sameDirection && Math.abs(requestedThrottle) > Math.abs(driveThrottle);
+    const throttleRate = autonomous.brake > 0.01 ? 3.2 : increasing ? THROTTLE_RISE_RATE : THROTTLE_FALL_RATE;
+    driveThrottle = moveTowards(driveThrottle, requestedThrottle, throttleRate * dt);
 
-    if (throttle !== 0 || steerInput !== 0) chassisBody.wakeUp();
+    const targetBrake = autopilotActive
+      ? autonomous.brake * AUTOPILOT_BRAKE
+      : Math.abs(manualThrottle) < 0.01 ? MANUAL_BRAKE : 0;
+    driveBrake = moveTowards(driveBrake, targetBrake, (targetBrake > driveBrake ? 1.8 : 5.0) * dt);
+    const engineForce = speedNow < MAX_DRIVE_SPEED ? driveThrottle * -MAX_ENGINE_FORCE : 0;
+
+    if (Math.abs(driveThrottle) > 0.001 || steerInput !== 0) chassisBody.wakeUp();
 
     for (let index = 0; index < 4; index += 1) {
       vehicle.setWheelEngineForce(index, engineForce);
-      vehicle.setWheelBrake(index, brake);
+      vehicle.setWheelBrake(index, driveBrake);
       vehicle.setWheelSteering(index, index < 2 ? steering : -steering * 0.68);
     }
     vehicle.updateVehicle(dt);

@@ -394,11 +394,11 @@ async function start() {
   const buildMissionMapBackground = () => {
     const context = missionMapBackground.getContext("2d")!;
     const image = context.createImageData(missionMapBackground.width, missionMapBackground.height);
-    const zMax = TERRAIN.centerZ + TERRAIN.depth / 2;
+    const zMin = TERRAIN.centerZ - TERRAIN.depth / 2;
     for (let py = 0; py < missionMapBackground.height; py += 1) {
       for (let px = 0; px < missionMapBackground.width; px += 1) {
         const x = -TERRAIN.width / 2 + (px / (missionMapBackground.width - 1)) * TERRAIN.width;
-        const z = zMax - (py / (missionMapBackground.height - 1)) * TERRAIN.depth;
+        const z = zMin + (py / (missionMapBackground.height - 1)) * TERRAIN.depth;
         const height = terrainHeight(x, z);
         const shade = THREE.MathUtils.clamp(0.42 + height * 0.25, 0.18, 0.84);
         const offset = (py * missionMapBackground.width + px) * 4;
@@ -413,7 +413,7 @@ async function start() {
 
   const worldToMap = (x: number, z: number) => ({
     x: ((x + TERRAIN.width / 2) / TERRAIN.width) * ui.missionMap.width,
-    y: ((TERRAIN.centerZ + TERRAIN.depth / 2 - z) / TERRAIN.depth) * ui.missionMap.height,
+    y: ((z - (TERRAIN.centerZ - TERRAIN.depth / 2)) / TERRAIN.depth) * ui.missionMap.height,
   });
 
   const mapEventToWorld = (event: MouseEvent) => {
@@ -422,7 +422,7 @@ async function start() {
     const v = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
     return {
       x: -TERRAIN.width / 2 + u * TERRAIN.width,
-      z: TERRAIN.centerZ + TERRAIN.depth / 2 - v * TERRAIN.depth,
+      z: TERRAIN.centerZ - TERRAIN.depth / 2 + v * TERRAIN.depth,
     };
   };
 
@@ -489,6 +489,18 @@ async function start() {
       context.strokeText(label, 8, y);
       context.fillText(label, 8, y);
     }
+
+    context.font = "600 22px Barlow Condensed, sans-serif";
+    context.textAlign = "right";
+    context.textBaseline = "top";
+    context.strokeStyle = "rgba(4, 7, 10, .92)";
+    context.lineWidth = 5;
+    context.strokeText("NORTE · −Z", ui.missionMap.width - 10, 9);
+    context.fillStyle = "#81d9ff";
+    context.fillText("NORTE · −Z", ui.missionMap.width - 10, 9);
+    context.textBaseline = "bottom";
+    context.strokeText("SUR · +Z", ui.missionMap.width - 10, ui.missionMap.height - 9);
+    context.fillText("SUR · +Z", ui.missionMap.width - 10, ui.missionMap.height - 9);
 
     const routePoints = missionBlocks
       .filter((block): block is Extract<MissionBlock, { type: "waypoint" }> => block.type === "waypoint")
@@ -573,7 +585,7 @@ async function start() {
     const roverPoint = worldToMap(position.x, position.z);
     const roverRotation = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w);
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(roverRotation);
-    const mapAngle = Math.atan2(-forward.z, forward.x) + Math.PI / 2;
+    const mapAngle = Math.atan2(forward.x, -forward.z);
     context.save();
     context.translate(roverPoint.x, roverPoint.y);
     context.rotate(mapAngle);

@@ -60,7 +60,7 @@ Vite mostrará una dirección local, normalmente `http://localhost:5173`.
 El mapa usa el mismo sistema de unidades que la simulación:
 
 - Cada cuadro pequeño representa **1 metro** y cada línea gruesa representa **5 metros**.
-- El eje **X** indica el desplazamiento lateral; el eje **Z**, el desplazamiento longitudinal del campo.
+- El eje **X** indica el desplazamiento lateral; el eje **Z**, el desplazamiento longitudinal del campo. En el mapa, **norte corresponde a −Z** y aparece arriba; **sur corresponde a +Z** y aparece abajo.
 - Al mover el cursor sobre el mapa se muestran sus coordenadas `X/Z` y la distancia en línea recta hasta el rover.
 - Cada waypoint muestra sus coordenadas, y cada tramo de la ruta indica la distancia exacta en metros.
 

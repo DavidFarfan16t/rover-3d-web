@@ -78,8 +78,11 @@ button, a { color: inherit; font: inherit; }
 .mission-status-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: #7e919e; font: 500 9px/1 "Barlow Condensed"; letter-spacing: .16em; }
 .mission-status-row strong { color: var(--green); font-weight: 600; }
 .mission-map-frame { position: relative; overflow: hidden; border: 1px solid rgba(129,217,255,.18); background: #11100d; }
-#mission-map { display: block; width: 100%; height: 190px; cursor: crosshair; }
-.mission-map-frame > p { position: absolute; right: 8px; bottom: 7px; margin: 0; padding: 4px 6px; color: rgba(244,240,231,.68); background: rgba(4,7,10,.72); font-size: 8px; letter-spacing: .08em; pointer-events: none; }
+#mission-map { display: block; width: 100%; height: auto; aspect-ratio: 28 / 44; cursor: crosshair; }
+.mission-map-meta { display: grid; gap: 4px; padding: 8px 9px 9px; border-top: 1px solid rgba(129,217,255,.16); background: rgba(4,7,10,.92); font-family: "Barlow Condensed", sans-serif; letter-spacing: .08em; }
+.mission-map-meta span { color: #8fa2af; font-size: 8px; }
+.mission-map-meta strong { color: var(--blue); font-size: 10px; font-weight: 600; }
+.mission-map-meta small { color: rgba(244,240,231,.42); font-size: 7px; }
 .block-builder, .mission-program { margin-top: 14px; }
 .block-builder h3, .mission-program h3 { margin: 0 0 7px; color: #7e919e; font: 500 9px/1 "Barlow Condensed"; letter-spacing: .18em; }
 .block-row {

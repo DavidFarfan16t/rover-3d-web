@@ -57,7 +57,14 @@ Vite mostrará una dirección local, normalmente `http://localhost:5173`.
 
 ## Planificador de misión
 
-1. Haz clic sobre el mapa para crear uno o varios waypoints. Con clic derecho sobre un waypoint puedes eliminarlo.
+El mapa usa el mismo sistema de unidades que la simulación:
+
+- Cada cuadro pequeño representa **1 metro** y cada línea gruesa representa **5 metros**.
+- El eje **X** indica el desplazamiento lateral; el eje **Z**, el desplazamiento longitudinal del campo.
+- Al mover el cursor sobre el mapa se muestran sus coordenadas `X/Z` y la distancia en línea recta hasta el rover.
+- Cada waypoint muestra sus coordenadas, y cada tramo de la ruta indica la distancia exacta en metros.
+
+1. Haz clic sobre el mapa para crear uno o varios waypoints. Las coordenadas se guardan con precisión de 0,1 m. Con clic derecho sobre un waypoint puedes eliminarlo.
 2. Construye el programa con los botones `+` de los bloques:
    - **Avanzar:** recorre la cantidad indicada de metros manteniendo el rumbo inicial del bloque.
    - **Girar:** usa grados positivos para girar a la izquierda y negativos para girar a la derecha.

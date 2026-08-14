@@ -82,6 +82,7 @@ const ui = {
   missionToggle: document.querySelector<HTMLButtonElement>("#mission-toggle")!,
   missionStatus: document.querySelector<HTMLElement>("#mission-status")!,
   missionMap: document.querySelector<HTMLCanvasElement>("#mission-map")!,
+  mapCoordinates: document.querySelector<HTMLElement>("#map-coordinates")!,
   driveDistance: document.querySelector<HTMLInputElement>("#drive-distance")!,
   turnAngle: document.querySelector<HTMLInputElement>("#turn-angle")!,
   waypointSelect: document.querySelector<HTMLSelectElement>("#waypoint-select")!,
@@ -277,6 +278,8 @@ async function start() {
     targetForward: new THREE.Vector3(0, 0, -1),
   };
   const roverTrail: Array<{ x: number; z: number }> = [];
+  const latestRoverMapPosition = { x: START.x, z: START.z };
+  let mapPointerWorld: { x: number; z: number } | null = null;
   let missionMapElapsed = 0;
   const missionMapContext = ui.missionMap.getContext("2d")!;
   const missionMapBackground = document.createElement("canvas");
@@ -306,7 +309,9 @@ async function start() {
     if (block.type === "drive") return `AVANZAR ${block.distance.toFixed(1)} m`;
     if (block.type === "turn") return `GIRAR ${block.angle > 0 ? "+" : ""}${Math.round(block.angle)}°`;
     const waypoint = waypoints.find((point) => point.id === block.waypointId);
-    return `IR A ${waypoint?.label ?? "WAYPOINT ELIMINADO"}`;
+    return waypoint
+      ? `IR A ${waypoint.label} · X ${waypoint.x.toFixed(1)} · Z ${waypoint.z.toFixed(1)}`
+      : "IR A WAYPOINT ELIMINADO";
   };
 
   const renderWaypointOptions = () => {
@@ -315,7 +320,7 @@ async function start() {
     waypoints.forEach((waypoint) => {
       const option = document.createElement("option");
       option.value = waypoint.id;
-      option.textContent = waypoint.label;
+      option.textContent = `${waypoint.label} · X ${waypoint.x.toFixed(1)} · Z ${waypoint.z.toFixed(1)}`;
       ui.waypointSelect.append(option);
     });
     if (waypoints.some((point) => point.id === selected)) ui.waypointSelect.value = selected;
@@ -411,20 +416,78 @@ async function start() {
     y: ((TERRAIN.centerZ + TERRAIN.depth / 2 - z) / TERRAIN.depth) * ui.missionMap.height,
   });
 
+  const mapEventToWorld = (event: MouseEvent) => {
+    const rect = ui.missionMap.getBoundingClientRect();
+    const u = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const v = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    return {
+      x: -TERRAIN.width / 2 + u * TERRAIN.width,
+      z: TERRAIN.centerZ + TERRAIN.depth / 2 - v * TERRAIN.depth,
+    };
+  };
+
+  const updateMapCoordinateReadout = (point: { x: number; z: number }, source: "ROVER" | "CURSOR") => {
+    if (source === "ROVER") {
+      ui.mapCoordinates.textContent = `ROVER · X ${point.x.toFixed(1)} m · Z ${point.z.toFixed(1)} m`;
+      return;
+    }
+    const distance = Math.hypot(point.x - latestRoverMapPosition.x, point.z - latestRoverMapPosition.z);
+    ui.mapCoordinates.textContent = `CURSOR · X ${point.x.toFixed(1)} m · Z ${point.z.toFixed(1)} m · AL ROVER ${distance.toFixed(1)} m`;
+  };
+
   const drawMissionMap = (position: { x: number; z: number }, rotation: { x: number; y: number; z: number; w: number }) => {
     const context = missionMapContext;
+    latestRoverMapPosition.x = position.x;
+    latestRoverMapPosition.z = position.z;
+    if (!mapPointerWorld) updateMapCoordinateReadout(position, "ROVER");
     context.clearRect(0, 0, ui.missionMap.width, ui.missionMap.height);
     context.drawImage(missionMapBackground, 0, 0, ui.missionMap.width, ui.missionMap.height);
 
-    context.strokeStyle = "rgba(245, 225, 205, .12)";
-    context.lineWidth = 1;
-    for (let division = 1; division < 8; division += 1) {
-      const x = (division / 8) * ui.missionMap.width;
-      context.beginPath(); context.moveTo(x, 0); context.lineTo(x, ui.missionMap.height); context.stroke();
+    const xMin = -TERRAIN.width / 2;
+    const xMax = TERRAIN.width / 2;
+    const zMin = TERRAIN.centerZ - TERRAIN.depth / 2;
+    const zMax = TERRAIN.centerZ + TERRAIN.depth / 2;
+    for (let meter = Math.ceil(xMin); meter <= Math.floor(xMax); meter += 1) {
+      const x = worldToMap(meter, 0).x;
+      const major = meter % 5 === 0;
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, ui.missionMap.height);
+      context.strokeStyle = meter === 0 ? "rgba(129, 217, 255, .62)" : major ? "rgba(245, 225, 205, .32)" : "rgba(245, 225, 205, .12)";
+      context.lineWidth = meter === 0 ? 3 : major ? 2 : 1;
+      context.stroke();
     }
-    for (let division = 1; division < 10; division += 1) {
-      const y = (division / 10) * ui.missionMap.height;
-      context.beginPath(); context.moveTo(0, y); context.lineTo(ui.missionMap.width, y); context.stroke();
+    for (let meter = Math.ceil(zMin); meter <= Math.floor(zMax); meter += 1) {
+      const y = worldToMap(0, meter).y;
+      const major = meter % 5 === 0;
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(ui.missionMap.width, y);
+      context.strokeStyle = meter === 0 ? "rgba(129, 217, 255, .62)" : major ? "rgba(245, 225, 205, .32)" : "rgba(245, 225, 205, .12)";
+      context.lineWidth = meter === 0 ? 3 : major ? 2 : 1;
+      context.stroke();
+    }
+
+    context.font = "500 20px Barlow Condensed, sans-serif";
+    context.fillStyle = "rgba(244, 240, 231, .82)";
+    context.strokeStyle = "rgba(4, 7, 10, .92)";
+    context.lineWidth = 5;
+    context.textBaseline = "bottom";
+    context.textAlign = "center";
+    for (let meter = Math.ceil(xMin / 5) * 5; meter <= Math.floor(xMax / 5) * 5; meter += 5) {
+      const x = worldToMap(meter, 0).x;
+      const label = `${meter} m`;
+      context.strokeText(label, x, ui.missionMap.height - 7);
+      context.fillText(label, x, ui.missionMap.height - 7);
+    }
+    context.textBaseline = "middle";
+    context.textAlign = "left";
+    for (let meter = Math.ceil(zMin / 5) * 5; meter <= Math.floor(zMax / 5) * 5; meter += 5) {
+      const y = worldToMap(0, meter).y;
+      if (y < 16 || y > ui.missionMap.height - 26) continue;
+      const label = `Z ${meter}`;
+      context.strokeText(label, 8, y);
+      context.fillText(label, 8, y);
     }
 
     const routePoints = missionBlocks
@@ -433,17 +496,37 @@ async function start() {
       .filter((point): point is Waypoint => Boolean(point));
     if (routePoints.length) {
       const start = worldToMap(START.x, START.z);
+      const segmentLabels: Array<{ x: number; y: number; distance: number }> = [];
+      let previousWorld = { x: START.x, z: START.z };
       context.beginPath();
       context.moveTo(start.x, start.y);
       routePoints.forEach((point) => {
         const mapPoint = worldToMap(point.x, point.z);
         context.lineTo(mapPoint.x, mapPoint.y);
+        segmentLabels.push({
+          x: (worldToMap(previousWorld.x, previousWorld.z).x + mapPoint.x) * 0.5,
+          y: (worldToMap(previousWorld.x, previousWorld.z).y + mapPoint.y) * 0.5,
+          distance: Math.hypot(point.x - previousWorld.x, point.z - previousWorld.z),
+        });
+        previousWorld = point;
       });
       context.setLineDash([9, 7]);
       context.strokeStyle = "rgba(129, 217, 255, .7)";
       context.lineWidth = 3;
       context.stroke();
       context.setLineDash([]);
+
+      context.font = "500 20px Barlow Condensed, sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      segmentLabels.forEach((segment) => {
+        const label = `${segment.distance.toFixed(1)} m`;
+        const width = context.measureText(label).width + 14;
+        context.fillStyle = "rgba(4, 7, 10, .86)";
+        context.fillRect(segment.x - width / 2, segment.y - 13, width, 26);
+        context.fillStyle = "#81d9ff";
+        context.fillText(label, segment.x, segment.y + 1);
+      });
     }
 
     if (roverTrail.length > 1) {
@@ -463,17 +546,28 @@ async function start() {
     waypoints.forEach((waypoint, index) => {
       const point = worldToMap(waypoint.x, waypoint.z);
       context.beginPath();
-      context.arc(point.x, point.y, 11, 0, Math.PI * 2);
+      context.arc(point.x, point.y, 17, 0, Math.PI * 2);
       context.fillStyle = waypoint.id === activeWaypointId && mission.running ? "#65e8a6" : "#071019";
       context.fill();
       context.lineWidth = 3;
       context.strokeStyle = "#81d9ff";
       context.stroke();
       context.fillStyle = waypoint.id === activeWaypointId && mission.running ? "#071019" : "#f4f0e7";
-      context.font = "600 16px Barlow Condensed, sans-serif";
+      context.font = "600 21px Barlow Condensed, sans-serif";
       context.textAlign = "center";
       context.textBaseline = "middle";
       context.fillText(String(index + 1), point.x, point.y + 1);
+
+      const labelOnLeft = point.x > ui.missionMap.width - 185;
+      const coordinateLabel = `${waypoint.label}  X ${waypoint.x.toFixed(1)} · Z ${waypoint.z.toFixed(1)}`;
+      context.font = "500 18px Barlow Condensed, sans-serif";
+      context.textAlign = labelOnLeft ? "right" : "left";
+      context.textBaseline = "bottom";
+      context.strokeStyle = "rgba(4, 7, 10, .94)";
+      context.lineWidth = 5;
+      context.strokeText(coordinateLabel, point.x + (labelOnLeft ? -23 : 23), point.y - 8);
+      context.fillStyle = "rgba(244, 240, 231, .88)";
+      context.fillText(coordinateLabel, point.x + (labelOnLeft ? -23 : 23), point.y - 8);
     });
 
     const roverPoint = worldToMap(position.x, position.z);
@@ -495,6 +589,18 @@ async function start() {
     context.lineWidth = 2;
     context.stroke();
     context.restore();
+
+    if (mapPointerWorld) {
+      const pointer = worldToMap(mapPointerWorld.x, mapPointerWorld.z);
+      context.beginPath();
+      context.moveTo(pointer.x - 15, pointer.y);
+      context.lineTo(pointer.x + 15, pointer.y);
+      context.moveTo(pointer.x, pointer.y - 15);
+      context.lineTo(pointer.x, pointer.y + 15);
+      context.strokeStyle = "rgba(244, 240, 231, .9)";
+      context.lineWidth = 2;
+      context.stroke();
+    }
   };
 
   buildMissionMapBackground();
@@ -737,15 +843,23 @@ async function start() {
   ui.missionPlay.addEventListener("click", startMission);
   ui.missionPause.addEventListener("click", () => pauseMission());
   ui.missionStop.addEventListener("click", () => stopMission(true, "DETENIDA"));
+  ui.missionMap.addEventListener("mousemove", (event) => {
+    mapPointerWorld = mapEventToWorld(event);
+    updateMapCoordinateReadout(mapPointerWorld, "CURSOR");
+    redrawCurrentMap();
+  });
+  ui.missionMap.addEventListener("mouseleave", () => {
+    mapPointerWorld = null;
+    updateMapCoordinateReadout(latestRoverMapPosition, "ROVER");
+    redrawCurrentMap();
+  });
   ui.missionMap.addEventListener("click", (event) => {
-    const rect = ui.missionMap.getBoundingClientRect();
-    const u = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    const v = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    const coordinate = mapEventToWorld(event);
     const waypoint: Waypoint = {
       id: makeId("wp"),
       label: `WP${waypoints.length + 1}`,
-      x: -TERRAIN.width / 2 + u * TERRAIN.width,
-      z: TERRAIN.centerZ + TERRAIN.depth / 2 - v * TERRAIN.depth,
+      x: Math.round(coordinate.x * 10) / 10,
+      z: Math.round(coordinate.z * 10) / 10,
     };
     waypoints.push(waypoint);
     saveMission();
@@ -755,11 +869,7 @@ async function start() {
   });
   ui.missionMap.addEventListener("contextmenu", (event) => {
     event.preventDefault();
-    const rect = ui.missionMap.getBoundingClientRect();
-    const u = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    const v = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
-    const x = -TERRAIN.width / 2 + u * TERRAIN.width;
-    const z = TERRAIN.centerZ + TERRAIN.depth / 2 - v * TERRAIN.depth;
+    const { x, z } = mapEventToWorld(event);
     let nearestIndex = -1;
     let nearestDistance = 1.15;
     waypoints.forEach((point, index) => {

@@ -15,9 +15,27 @@ const START = { x: 0, y: 0.62, z: 4.2 };
 const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
 const ARTICULATION_VISUAL_GAIN = 1.55;
 const MAX_DRIVE_SPEED = 1.5;
-const MAX_ENGINE_FORCE = 34;
+// Tren motriz: cuatro motores de 2,6 N·m, cada uno con reducción 50:1.
+// Rapier recibe fuerza longitudinal por rueda, por eso convertimos el par
+// disponible mediante F = torque / radio. El valor ideal se limita después
+// por el agarre, porque aplicar los 586 N teóricos por rueda haría patinar o
+// volcar un rover de aproximadamente 45,6 kg.
+const MOTOR_COUNT = 4;
+const MOTOR_TORQUE_NM = 2.6;
+const GEAR_RATIO = 50;
+const DRIVETRAIN_EFFICIENCY = 0.82;
+const ROVER_MASS_KG = 45.6;
+const TIRE_TRACTION_COEFFICIENT = 1.1;
+const WHEEL_TORQUE_NM = MOTOR_TORQUE_NM * GEAR_RATIO * DRIVETRAIN_EFFICIENCY;
+const THEORETICAL_WHEEL_FORCE_N = WHEEL_TORQUE_NM / WHEEL_RADIUS;
+const TRACTION_LIMIT_PER_WHEEL_N = ROVER_MASS_KG * 9.81 * TIRE_TRACTION_COEFFICIENT / MOTOR_COUNT;
+const CRUISE_ENGINE_FORCE = 42;
+const CLIMB_ENGINE_FORCE = Math.min(THEORETICAL_WHEEL_FORCE_N, TRACTION_LIMIT_PER_WHEEL_N);
+const AUTOPILOT_MAX_THROTTLE = 0.78;
 const THROTTLE_RISE_RATE = 0.82;
 const THROTTLE_FALL_RATE = 2.2;
+const TRACTION_ASSIST_RISE_RATE = 1.1;
+const TRACTION_ASSIST_FALL_RATE = 2.5;
 const AUTOPILOT_BRAKE = 0.9;
 const MANUAL_BRAKE = 0.65;
 
@@ -193,7 +211,7 @@ async function start() {
     vehicle.setWheelSuspensionRelaxation(index, 7.0);
     vehicle.setWheelMaxSuspensionTravel(index, 0.26);
     vehicle.setWheelMaxSuspensionForce(index, 4200);
-    vehicle.setWheelFrictionSlip(index, 2.7);
+    vehicle.setWheelFrictionSlip(index, 3.4);
     vehicle.setWheelSideFrictionStiffness(index, 0.82);
   });
 
@@ -245,12 +263,16 @@ async function start() {
   let steering = 0;
   let driveThrottle = 0;
   let driveBrake = 0;
+  let tractionAssist = 0;
+  let lowSpeedDemandTime = 0;
   let leftRocker = 0;
   let rightRocker = 0;
   let followCamera = true;
   let accumulator = 0;
   const clock = new THREE.Clock();
   const tempQuaternion = new THREE.Quaternion();
+  const driveQuaternion = new THREE.Quaternion();
+  const driveForward = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
   const cameraDesired = new THREE.Vector3();
 
@@ -732,7 +754,7 @@ async function start() {
       const headingError = signedHeadingError(forward, mission.startForward);
       const steer = THREE.MathUtils.clamp(headingError / 0.42, -1, 1);
       const targetSpeed = THREE.MathUtils.clamp(Math.max(0, remaining - 0.06) * 1.05, 0, 0.95);
-      const throttle = THREE.MathUtils.clamp((targetSpeed - speed) * 1.35, 0, 0.62);
+      const throttle = THREE.MathUtils.clamp((targetSpeed - speed) * 1.35, 0, AUTOPILOT_MAX_THROTTLE);
       const brake = THREE.MathUtils.clamp((speed - targetSpeed - 0.05) * 2.0, 0, 1);
       return { throttle: Math.abs(headingError) > 0.85 ? Math.min(0.14, throttle) : throttle, steer, brake };
     }
@@ -768,7 +790,7 @@ async function start() {
     // La velocidad objetivo cae progresivamente durante el último metro. Si
     // el rover llega más rápido de lo debido, deja de empujar y frena suave.
     const targetSpeed = THREE.MathUtils.clamp(Math.max(0, distance - 0.28) * 0.82, 0, 0.92);
-    const approach = THREE.MathUtils.clamp((targetSpeed - speed) * 1.4, 0, 0.60);
+    const approach = THREE.MathUtils.clamp((targetSpeed - speed) * 1.4, 0, AUTOPILOT_MAX_THROTTLE);
     const brake = THREE.MathUtils.clamp((speed - targetSpeed - 0.05) * 2.0, 0, 1);
     const turnPenalty = THREE.MathUtils.clamp(1 - Math.abs(headingError) / 1.35, 0.12, 1);
     return { throttle: approach * turnPenalty, steer, brake };
@@ -800,6 +822,8 @@ async function start() {
     steering = 0;
     driveThrottle = 0;
     driveBrake = 0;
+    tractionAssist = 0;
+    lowSpeedDemandTime = 0;
     leftRocker = 0;
     rightRocker = 0;
     roverTrail.length = 0;
@@ -959,7 +983,32 @@ async function start() {
       ? autonomous.brake * AUTOPILOT_BRAKE
       : Math.abs(manualThrottle) < 0.01 ? MANUAL_BRAKE : 0;
     driveBrake = moveTowards(driveBrake, targetBrake, (targetBrake > driveBrake ? 1.8 : 5.0) * dt);
-    const engineForce = speedNow < MAX_DRIVE_SPEED ? driveThrottle * -MAX_ENGINE_FORCE : 0;
+
+    // Reserva progresiva de par: se activa al apuntar cuesta arriba o cuando
+    // existe demanda de aceleración pero el rover permanece casi detenido.
+    // La rampa independiente evita entregar de golpe todo el par de la caja.
+    const bodyRotation = chassisBody.rotation();
+    driveQuaternion.set(bodyRotation.x, bodyRotation.y, bodyRotation.z, bodyRotation.w);
+    driveForward.set(0, 0, -1).applyQuaternion(driveQuaternion);
+    const driveDirection = Math.sign(driveThrottle);
+    const uphillComponent = driveForward.y * driveDirection;
+    const uphillAssist = THREE.MathUtils.clamp((uphillComponent - 0.025) / 0.27, 0, 1);
+    const demandingTraction =
+      Math.abs(requestedThrottle) > 0.28 &&
+      speedNow < 0.42 &&
+      driveBrake < 0.05;
+    lowSpeedDemandTime = demandingTraction
+      ? Math.min(lowSpeedDemandTime + dt, 1.5)
+      : Math.max(lowSpeedDemandTime - dt * 2.2, 0);
+    const stallAssist = THREE.MathUtils.smoothstep(lowSpeedDemandTime, 0.35, 1.1);
+    const targetTractionAssist = Math.max(uphillAssist, stallAssist);
+    tractionAssist = moveTowards(
+      tractionAssist,
+      targetTractionAssist,
+      (targetTractionAssist > tractionAssist ? TRACTION_ASSIST_RISE_RATE : TRACTION_ASSIST_FALL_RATE) * dt,
+    );
+    const forcePerWheel = THREE.MathUtils.lerp(CRUISE_ENGINE_FORCE, CLIMB_ENGINE_FORCE, tractionAssist);
+    const engineForce = speedNow < MAX_DRIVE_SPEED ? driveThrottle * -forcePerWheel : 0;
 
     if (Math.abs(driveThrottle) > 0.001 || steerInput !== 0) chassisBody.wakeUp();
 
@@ -1043,6 +1092,14 @@ async function start() {
   console.info("[rover] simulación lista", {
     physicsHz: PHYSICS_HZ,
     model: MODEL_URL,
+    drivetrain: {
+      motors: MOTOR_COUNT,
+      motorTorqueNm: MOTOR_TORQUE_NM,
+      gearRatio: GEAR_RATIO,
+      wheelTorqueNm: Number(WHEEL_TORQUE_NM.toFixed(1)),
+      theoreticalForcePerWheelN: Number(THEORETICAL_WHEEL_FORCE_N.toFixed(1)),
+      tractionLimitedForcePerWheelN: Number(CLIMB_ENGINE_FORCE.toFixed(1)),
+    },
     sleepingDisabled: true,
     ccdEnabled: true,
   });

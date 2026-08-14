@@ -28,6 +28,10 @@ Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para
 - La dirección máxima disminuye con la velocidad para reducir vuelcos poco realistas.
 - La masa física se aproxima a 50 kg y el centro de masa está ligeramente rebajado para evitar caballitos.
 - La fuerza de los motores entra mediante una rampa; no pasa instantáneamente de cero al máximo.
+- La tracción está calibrada para **4 motores de 2,6 N·m** y una reducción **50:1**. Con una eficiencia estimada del 82 %, cada rueda dispone de unos **106,6 N·m** después de la caja.
+- Con ruedas de 0,182 m de radio, el tren motriz podría producir teóricamente unos **586 N por rueda**. La simulación limita esa cifra a unos **123 N por rueda**, de acuerdo con la masa y el agarre, para evitar patinaje y vuelcos irreales.
+- En terreno normal se usan 42 N por rueda. La reserva de par aumenta progresivamente hasta el límite de agarre cuando el rover apunta cuesta arriba o permanece casi detenido bajo aceleración.
+- El piloto automático puede solicitar hasta el 78 % del acelerador cuando una pendiente reduce su velocidad; no depende de mantener pulsada la tecla `W` para usar la asistencia de subida.
 - El piloto automático reduce su velocidad durante el último metro y aplica un freno progresivo antes de cada waypoint.
 - El reinicio limpia velocidad, giro, fuerzas, frenos y estado visual de la suspensión.
 

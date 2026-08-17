@@ -13,7 +13,8 @@ const WHEEL_RADIUS = 0.182;
 const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
 const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
-const ARTICULATION_VISUAL_GAIN = 3;
+const MAX_INDEPENDENT_ROCKER_ANGLE = 0.52;
+const MAX_VISUAL_ROLL = 0.40;
 const MAX_DRIVE_SPEED = 2.5;
 // Tren motriz: cuatro motores de 2,6 N·m, cada uno con reducción 50:1.
 // Rapier recibe fuerza longitudinal por rueda, por eso convertimos el par
@@ -64,8 +65,8 @@ const terrainHeight = (x: number, z: number) => {
     gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
     gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
 
-  // Montículos estrechos, alternados sobre cada huella. La física no cambia:
-  // la amplificación visual de los balancines se aplica después al modelo GLB.
+  // Montículos estrechos, alternados sobre cada huella. Cada lateral del rig
+  // visual resuelve después su propio ángulo de balancín.
   const singleWheelBumps =
     gaussian(x, z, -0.55, 1.15, 0.52, 0.29) +
     gaussian(x, z, 0.55, -0.75, 0.50, 0.32) +
@@ -86,12 +87,6 @@ type ControlBinding = {
   node: THREE.Object3D;
   base: THREE.Quaternion;
   axis: THREE.Vector3;
-};
-
-type WheelGroundBinding = {
-  support: THREE.Object3D;
-  wheel: THREE.Object3D;
-  basePosition: THREE.Vector3;
 };
 
 type Waypoint = { id: string; label: string; x: number; z: number };
@@ -266,17 +261,16 @@ async function start() {
   const steeringControls = ["STEER_FL_CTRL", "STEER_FR_CTRL", "STEER_RL_CTRL", "STEER_RR_CTRL"]
     .map((name) => bind(name, new THREE.Vector3(0, 1, 0)));
   const suspensionControls = [bind("SUSP_L_CTRL", new THREE.Vector3(1, 0, 0)), bind("SUSP_R_CTRL", new THREE.Vector3(1, 0, 0))];
-  const wheelGroundBindings: Array<WheelGroundBinding | null> = steeringControls.map((steeringControl, index) => {
-    const wheel = wheels[index];
-    if (!steeringControl || !wheel) return null;
-    return {
-      support: steeringControl.node,
-      wheel: wheel.node,
-      basePosition: steeringControl.node.position.clone(),
-    };
-  });
   const differential = model.getObjectByName("DIFF_CTRL");
   const differentialBase = differential?.quaternion.clone();
+
+  const neutralWheelCenters = wheels.map((wheel) => {
+    const centerPosition = new THREE.Vector3();
+    wheel?.node.getWorldPosition(centerPosition);
+    return roverVisual.worldToLocal(centerPosition);
+  });
+  const leftRockerSpan = neutralWheelCenters[0].distanceTo(neutralWheelCenters[2]);
+  const rightRockerSpan = neutralWheelCenters[1].distanceTo(neutralWheelCenters[3]);
 
   const pressed = new Set<string>();
   let steering = 0;
@@ -287,6 +281,7 @@ async function start() {
   let antiWheelieAssist = 0;
   let leftRocker = 0;
   let rightRocker = 0;
+  let visualRoll = 0;
   let followCamera = true;
   let accumulator = 0;
   const clock = new THREE.Clock();
@@ -296,9 +291,14 @@ async function start() {
   const drivePitchAxis = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
   const cameraDesired = new THREE.Vector3();
-  const wheelWorldPosition = new THREE.Vector3();
-  const supportWorldPosition = new THREE.Vector3();
-  const supportGroundPosition = new THREE.Vector3();
+  const bodyVisualQuaternion = new THREE.Quaternion();
+  const visualYawQuaternion = new THREE.Quaternion();
+  const visualRollQuaternion = new THREE.Quaternion();
+  const visualForward = new THREE.Vector3();
+  const visualForwardAxis = new THREE.Vector3(0, 0, -1);
+  const visualRollAxis = new THREE.Vector3(0, 0, 1);
+  const wheelWorldPositions = Array.from({ length: 4 }, () => new THREE.Vector3());
+  const terrainWheelTargets = new Float64Array(4);
 
   const makeId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const defaultWaypoints: Waypoint[] = [
@@ -851,6 +851,7 @@ async function start() {
     antiWheelieAssist = 0;
     leftRocker = 0;
     rightRocker = 0;
+    visualRoll = 0;
     roverTrail.length = 0;
     if (!preserveMission) stopMission(true, "LISTA");
     for (let index = 0; index < 4; index += 1) {
@@ -1087,61 +1088,121 @@ async function start() {
     world.step();
   };
 
-  const updateVisuals = (dt: number) => {
-    // Se parte siempre de la posición original para que la corrección visual
-    // de las ruedas no acumule desplazamiento entre fotogramas.
-    wheelGroundBindings.forEach((binding) => {
-      if (binding) binding.support.position.copy(binding.basePosition);
-    });
+  const setKinematicVisualPose = (x: number, z: number, roll: number, height: number) => {
+    visualRollQuaternion.setFromAxisAngle(visualRollAxis, roll);
+    roverVisual.position.set(x, height, z);
+    roverVisual.quaternion.copy(visualYawQuaternion).multiply(visualRollQuaternion);
+    roverVisual.updateMatrixWorld(true);
+  };
 
+  const updateVisualWheelPositions = () => {
+    model.updateMatrixWorld(true);
+    wheels.forEach((wheel, index) => {
+      wheel?.node.getWorldPosition(wheelWorldPositions[index]);
+    });
+  };
+
+  const sampleTerrainUnderVisualWheels = () => {
+    updateVisualWheelPositions();
+    wheelWorldPositions.forEach((wheelPosition, index) => {
+      terrainWheelTargets[index] = terrainHeight(wheelPosition.x, wheelPosition.z) + WHEEL_RADIUS;
+    });
+  };
+
+  const solveIndependentRockerAngles = () => {
+    const maxNormalizedDifference = Math.sin(MAX_INDEPENDENT_ROCKER_ANGLE);
+    const leftDifference = THREE.MathUtils.clamp(
+      (terrainWheelTargets[0] - terrainWheelTargets[2]) / leftRockerSpan,
+      -maxNormalizedDifference,
+      maxNormalizedDifference,
+    );
+    const rightDifference = THREE.MathUtils.clamp(
+      (terrainWheelTargets[1] - terrainWheelTargets[3]) / rightRockerSpan,
+      -maxNormalizedDifference,
+      maxNormalizedDifference,
+    );
+    leftRocker = Math.asin(leftDifference);
+    rightRocker = Math.asin(rightDifference);
+    applyBinding(suspensionControls[0], leftRocker);
+    applyBinding(suspensionControls[1], rightRocker);
+    model.updateMatrixWorld(true);
+  };
+
+  const measureVisualSideHeightDifference = (x: number, z: number, roll: number) => {
+    setKinematicVisualPose(x, z, roll, 0);
+    updateVisualWheelPositions();
+    const leftMean = (wheelWorldPositions[0].y + wheelWorldPositions[2].y) * 0.5;
+    const rightMean = (wheelWorldPositions[1].y + wheelWorldPositions[3].y) * 0.5;
+    return rightMean - leftMean;
+  };
+
+  const solveVisualRoll = (x: number, z: number) => {
+    const targetDifference =
+      (terrainWheelTargets[1] + terrainWheelTargets[3] - terrainWheelTargets[0] - terrainWheelTargets[2]) * 0.5;
+    let angle = visualRoll;
+    const epsilon = 0.004;
+
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      const currentDifference = measureVisualSideHeightDifference(x, z, angle);
+      const probeAngle = angle < MAX_VISUAL_ROLL - epsilon ? angle + epsilon : angle - epsilon;
+      const probeDifference = measureVisualSideHeightDifference(x, z, probeAngle);
+      const derivative = (probeDifference - currentDifference) / (probeAngle - angle);
+      if (Math.abs(derivative) < 0.05) break;
+      angle = THREE.MathUtils.clamp(
+        angle - (currentDifference - targetDifference) / derivative,
+        -MAX_VISUAL_ROLL,
+        MAX_VISUAL_ROLL,
+      );
+    }
+
+    visualRoll = angle;
+    setKinematicVisualPose(x, z, visualRoll, 0);
+  };
+
+  const updateVisuals = (dt: number) => {
     const position = chassisBody.translation();
     const rotation = chassisBody.rotation();
-    roverVisual.position.set(position.x, position.y, position.z);
-    roverVisual.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    bodyVisualQuaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    visualForward.copy(visualForwardAxis).applyQuaternion(bodyVisualQuaternion);
+    visualForward.y = 0;
+    if (visualForward.lengthSq() > 0.000001) {
+      visualForward.normalize();
+      const yaw = Math.atan2(-visualForward.x, -visualForward.z);
+      visualYawQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    }
 
     steeringControls.forEach((control, index) => applyBinding(control, index < 2 ? steering : -steering * 0.68));
     wheels.forEach((wheel, index) => applyBinding(wheel, vehicle.wheelRotation(index) ?? 0));
 
-    const lengths = [0, 1, 2, 3].map((index) => vehicle.wheelSuspensionLength(index) ?? SUSPENSION_REST);
-    const sideWheelbase = Math.abs(wheelConnections[2].z - wheelConnections[0].z);
-    const leftTarget = THREE.MathUtils.clamp(
-      Math.atan2(lengths[2] - lengths[0], sideWheelbase) * ARTICULATION_VISUAL_GAIN,
-      -0.52,
-      0.52,
-    );
-    const rightTarget = THREE.MathUtils.clamp(
-      Math.atan2(lengths[1] - lengths[3], sideWheelbase) * ARTICULATION_VISUAL_GAIN,
-      -0.52,
-      0.52,
-    );
-    leftRocker = THREE.MathUtils.damp(leftRocker, leftTarget, 12, dt);
-    rightRocker = THREE.MathUtils.damp(rightRocker, rightTarget, 12, dt);
-    applyBinding(suspensionControls[0], leftRocker);
-    applyBinding(suspensionControls[1], rightRocker);
-    if (differential && differentialBase) {
-      tempQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (leftRocker - rightRocker) * 0.52);
-      differential.quaternion.copy(differentialBase).premultiply(tempQuaternion);
+    // El diferencial permanece en su orientación original: ya no combina ni
+    // limita el movimiento de los dos laterales.
+    if (differential && differentialBase) differential.quaternion.copy(differentialBase);
+
+    // Cinemática visual independiente. Cada SUSP_* rota como un conjunto
+    // rígido desde su propio pivote; no se traslada STEER_* ni ninguna rueda,
+    // por lo que los soportes y brazos nunca pueden abrirse entre sí.
+    for (let pass = 0; pass < 3; pass += 1) {
+      setKinematicVisualPose(position.x, position.z, visualRoll, 0);
+      applyBinding(suspensionControls[0], leftRocker);
+      applyBinding(suspensionControls[1], rightRocker);
+      sampleTerrainUnderVisualWheels();
+      solveIndependentRockerAngles();
+      solveVisualRoll(position.x, position.z);
     }
 
-    // Ajuste puramente visual: lleva el centro de cada llanta a la altura del
-    // terreno más su radio. Se mueve el control de dirección completo para
-    // que la pieza C y su soporte acompañen a la rueda. Rapier sigue
-    // controlando el chasis, pero la malla de la llanta nunca queda flotando.
-    model.updateMatrixWorld(true);
-    wheelGroundBindings.forEach((binding) => {
-      if (!binding?.support.parent) return;
+    // Solo se desplaza el rover completo en vertical. Así las cuatro llantas
+    // quedan sobre el terreno conservando intacta toda la jerarquía mecánica.
+    setKinematicVisualPose(position.x, position.z, visualRoll, 0);
+    applyBinding(suspensionControls[0], leftRocker);
+    applyBinding(suspensionControls[1], rightRocker);
+    sampleTerrainUnderVisualWheels();
+    const visualHeight = wheelWorldPositions.reduce(
+      (sum, wheelPosition, index) => sum + terrainWheelTargets[index] - wheelPosition.y,
+      0,
+    ) / wheelWorldPositions.length;
+    setKinematicVisualPose(position.x, position.z, visualRoll, visualHeight);
 
-      binding.wheel.getWorldPosition(wheelWorldPosition);
-      binding.support.getWorldPosition(supportWorldPosition);
-      supportGroundPosition.copy(supportWorldPosition);
-      supportGroundPosition.y += terrainHeight(wheelWorldPosition.x, wheelWorldPosition.z)
-        + WHEEL_RADIUS
-        - wheelWorldPosition.y;
-
-      binding.support.parent.worldToLocal(supportGroundPosition);
-      binding.support.position.copy(supportGroundPosition);
-      binding.support.updateMatrixWorld(true);
-    });
+    const lengths = [0, 1, 2, 3].map((index) => vehicle.wheelSuspensionLength(index) ?? SUSPENSION_REST);
 
     const speed = Math.abs(vehicle.currentVehicleSpeed()) * 3.6;
     const contacts = [0, 1, 2, 3].filter((index) => vehicle.wheelIsInContact(index)).length;

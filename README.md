@@ -11,7 +11,9 @@ Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para
 - Superficie marciana procedural de alta resolución: variación de tonos, grano, vetas de viento, motas minerales, microcráteres y relieve fino mediante `bump map`, sin colocar piedras artificiales sobre el plano.
 - Montículos estrechos alternados para elevar una sola rueda y probar la articulación lateral.
 - Suspensión raycast de recorrido ampliado y mayor amortiguación para conservar los cuatro contactos.
-- Ángulo visual del balancín calculado geométricamente según la distancia entre ejes.
+- Cinemática visual independiente para los laterales izquierdo y derecho: cada balancín rota completo desde su pivote y conserva unidas las ruedas, soportes y articulaciones.
+- Ajuste visual de altura e inclinación del rover completo para mantener las cuatro llantas sobre el terreno sin trasladar piezas individuales.
+- El diferencial permanece fijo y no interviene en el movimiento de los dos balancines.
 - Una misma malla triangular se utiliza para la representación visual y las colisiones.
 - Telemetría de velocidad, contactos y compresión.
 - Cámara de seguimiento y cámara orbital.

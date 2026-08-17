@@ -27,16 +27,17 @@ Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para
 - Cualquier control de conducción despierta explícitamente el cuerpo físico.
 - La detección continua de colisiones (CCD) reduce penetraciones al atravesar obstáculos.
 - La dirección máxima disminuye con la velocidad para reducir vuelcos poco realistas.
-- La velocidad manual máxima aumenta de 1,5 a **1,85 m/s** (aprox. **6,7 km/h**) y el piloto automático utiliza objetivos de hasta 1,18 m/s.
+- La velocidad manual máxima es de **2,5 m/s** (aprox. **9,0 km/h**) y el piloto automático utiliza objetivos de hasta **1,65 m/s** (aprox. **5,9 km/h**).
 - La masa física se aproxima a 50 kg y el centro de masa está ligeramente rebajado para evitar caballitos.
 - El centro de masa se rebajó 4 cm adicionales y aumentó la amortiguación angular.
-- La fuerza de los motores entra mediante una rampa; no pasa instantáneamente de cero al máximo.
+- La fuerza de los motores entra mediante una rampa de unos **0,91 s**; responde con rapidez sin pasar instantáneamente de cero al máximo.
 - Un control anti-caballito comprueba los contactos de las ruedas delanteras/traseras y la velocidad de cabeceo. Cuando detecta que el lado delantero empieza a levantarse, reduce temporalmente el par y lo restituye de forma progresiva al recuperar contacto.
 - Si alguna rueda pierde el terreno, se aplica durante ese instante una fuerza vertical de recuperación proporcional al número de contactos faltantes. La ayuda desaparece en cuanto vuelven los cuatro apoyos, para conservar visible el movimiento de la suspensión.
 - La tracción está calibrada para **4 motores de 2,6 N·m** y una reducción **50:1**. Con una eficiencia estimada del 82 %, cada rueda dispone de unos **106,6 N·m** después de la caja.
 - Con ruedas de 0,182 m de radio, el tren motriz podría producir teóricamente unos **586 N por rueda**. La simulación limita esa cifra a unos **123 N por rueda**, de acuerdo con la masa y el agarre, para evitar patinaje y vuelcos irreales.
-- En terreno normal se usan 42 N por rueda. La reserva de par aumenta progresivamente hasta el límite de agarre cuando el rover apunta cuesta arriba o permanece casi detenido bajo aceleración.
-- El piloto automático puede solicitar hasta el 78 % del acelerador cuando una pendiente reduce su velocidad; no depende de mantener pulsada la tecla `W` para usar la asistencia de subida.
+- En terreno normal se usan **78 N por rueda**. La reserva de par aumenta progresivamente hasta el límite de agarre cuando el rover apunta cuesta arriba o permanece casi detenido bajo aceleración.
+- El piloto automático puede solicitar hasta el **88 %** del acelerador cuando una pendiente reduce su velocidad; no depende de mantener pulsada la tecla `W` para usar la asistencia de subida.
+- Un limitador suave reduce el empuje durante los últimos 0,32 m/s antes de la velocidad máxima, evitando los tirones de un corte instantáneo.
 - El piloto automático reduce su velocidad durante el último metro y aplica un freno progresivo antes de cada waypoint.
 - El reinicio limpia velocidad, giro, fuerzas, frenos y estado visual de la suspensión.
 

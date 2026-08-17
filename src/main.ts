@@ -14,7 +14,7 @@ const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
 const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
 const ARTICULATION_VISUAL_GAIN = 1.55;
-const MAX_DRIVE_SPEED = 1.85;
+const MAX_DRIVE_SPEED = 2.5;
 // Tren motriz: cuatro motores de 2,6 N·m, cada uno con reducción 50:1.
 // Rapier recibe fuerza longitudinal por rueda, por eso convertimos el par
 // disponible mediante F = torque / radio. El valor ideal se limita después
@@ -29,10 +29,10 @@ const TIRE_TRACTION_COEFFICIENT = 1.1;
 const WHEEL_TORQUE_NM = MOTOR_TORQUE_NM * GEAR_RATIO * DRIVETRAIN_EFFICIENCY;
 const THEORETICAL_WHEEL_FORCE_N = WHEEL_TORQUE_NM / WHEEL_RADIUS;
 const TRACTION_LIMIT_PER_WHEEL_N = ROVER_MASS_KG * 9.81 * TIRE_TRACTION_COEFFICIENT / MOTOR_COUNT;
-const CRUISE_ENGINE_FORCE = 42;
+const CRUISE_ENGINE_FORCE = 78;
 const CLIMB_ENGINE_FORCE = Math.min(THEORETICAL_WHEEL_FORCE_N, TRACTION_LIMIT_PER_WHEEL_N);
-const AUTOPILOT_MAX_THROTTLE = 0.78;
-const THROTTLE_RISE_RATE = 0.82;
+const AUTOPILOT_MAX_THROTTLE = 0.88;
+const THROTTLE_RISE_RATE = 1.1;
 const THROTTLE_FALL_RATE = 2.2;
 const TRACTION_ASSIST_RISE_RATE = 1.1;
 const TRACTION_ASSIST_FALL_RATE = 2.5;
@@ -759,7 +759,7 @@ async function start() {
       }
       const headingError = signedHeadingError(forward, mission.startForward);
       const steer = THREE.MathUtils.clamp(headingError / 0.42, -1, 1);
-      const targetSpeed = THREE.MathUtils.clamp(Math.max(0, remaining - 0.06) * 1.05, 0, 1.18);
+      const targetSpeed = THREE.MathUtils.clamp(Math.max(0, remaining - 0.06) * 1.22, 0, 1.65);
       const throttle = THREE.MathUtils.clamp((targetSpeed - speed) * 1.35, 0, AUTOPILOT_MAX_THROTTLE);
       const brake = THREE.MathUtils.clamp((speed - targetSpeed - 0.05) * 2.0, 0, 1);
       return { throttle: Math.abs(headingError) > 0.85 ? Math.min(0.14, throttle) : throttle, steer, brake };
@@ -795,7 +795,7 @@ async function start() {
     const steer = THREE.MathUtils.clamp(headingError / 0.48, -1, 1);
     // La velocidad objetivo cae progresivamente durante el último metro. Si
     // el rover llega más rápido de lo debido, deja de empujar y frena suave.
-    const targetSpeed = THREE.MathUtils.clamp(Math.max(0, distance - 0.28) * 0.90, 0, 1.14);
+    const targetSpeed = THREE.MathUtils.clamp(Math.max(0, distance - 0.28) * 1.08, 0, 1.55);
     const approach = THREE.MathUtils.clamp((targetSpeed - speed) * 1.4, 0, AUTOPILOT_MAX_THROTTLE);
     const brake = THREE.MathUtils.clamp((speed - targetSpeed - 0.05) * 2.0, 0, 1);
     const turnPenalty = THREE.MathUtils.clamp(1 - Math.abs(headingError) / 1.35, 0.12, 1);
@@ -1041,9 +1041,11 @@ async function start() {
       (targetAntiWheelie > antiWheelieAssist ? ANTI_WHEELIE_RISE_RATE : ANTI_WHEELIE_FALL_RATE) * dt,
     );
     const antiWheelieTorqueScale = THREE.MathUtils.lerp(1, ANTI_WHEELIE_MIN_TORQUE_SCALE, antiWheelieAssist);
-    const engineForce = speedNow < MAX_DRIVE_SPEED
-      ? driveThrottle * -forcePerWheel * antiWheelieTorqueScale
-      : 0;
+    // Limitador suave: conserva todo el empuje hasta los últimos 0,32 m/s y
+    // lo reduce progresivamente al acercarse al máximo. Así el rover acelera
+    // con decisión sin oscilar por un corte brusco de motor.
+    const speedLimitFactor = THREE.MathUtils.smoothstep(MAX_DRIVE_SPEED - speedNow, 0, 0.32);
+    const engineForce = driveThrottle * -forcePerWheel * antiWheelieTorqueScale * speedLimitFactor;
 
     // Impulso equivalente a una fuerza vertical de corta duración. Solo se
     // activa mientras faltan contactos, por lo que no aplasta continuamente

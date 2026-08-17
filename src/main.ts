@@ -56,23 +56,77 @@ const terrainHeight = (x: number, z: number) => {
     Math.cos(z * 0.25 - x * 0.05) * 0.17 +
     Math.sin((x + z) * 0.43) * 0.09;
 
-  const formations =
-    gaussian(x, z, -4.5, 0.3, 2.8, 0.82) +
-    gaussian(x, z, 4.2, -2.4, 2.5, 0.70) +
-    gaussian(x, z, -1.0, -9.0, 3.6, 0.95) +
-    gaussian(x, z, 5.0, -14.0, 3.1, 0.78) -
-    gaussian(x, z, -2.0, -2.5, 1.7, 0.42) -
-    gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
-    gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
+const formations =
+  // Montículos grandes distribuidos por todo el terreno
+  gaussian(x, z, -9.0, 13.0, 3.0, 0.58) +
+  gaussian(x, z, 8.0, 11.0, 2.7, 0.64) +
+  gaussian(x, z, -5.5, 7.0, 3.4, 0.76) +
+  gaussian(x, z, 6.5, 5.5, 2.5, 0.62) +
+  gaussian(x, z, -10.0, 1.5, 2.8, 0.72) +
+  gaussian(x, z, 9.5, -1.0, 3.2, 0.78) +
+  gaussian(x, z, -4.0, -4.0, 2.4, 0.58) +
+  gaussian(x, z, 3.5, -7.0, 3.8, 0.88) +
+  gaussian(x, z, -9.0, -10.5, 3.0, 0.72) +
+  gaussian(x, z, 10.0, -13.5, 2.8, 0.66) +
+  gaussian(x, z, -3.0, -16.5, 3.5, 0.84) +
+  gaussian(x, z, 6.5, -20.0, 3.1, 0.80) +
+  gaussian(x, z, -10.0, -23.0, 2.5, 0.62) +
 
-  // Montículos estrechos, alternados sobre cada huella. Cada lateral del rig
-  // visual resuelve después su propio ángulo de balancín.
-  const singleWheelBumps =
-    gaussian(x, z, -0.55, 1.15, 0.52, 0.29) +
-    gaussian(x, z, 0.55, -0.75, 0.50, 0.32) +
-    gaussian(x, z, -0.55, -2.75, 0.51, 0.30) +
-    gaussian(x, z, 0.55, -4.80, 0.52, 0.33) +
-    gaussian(x, z, -0.55, -6.85, 0.49, 0.31);
+  // Hundimientos grandes distribuidos por todo el terreno
+  -gaussian(x, z, 0.0, 13.0, 2.2, 0.36) -
+  gaussian(x, z, -1.0, 6.5, 2.0, 0.42) -
+  gaussian(x, z, 11.0, 5.0, 2.4, 0.50) -
+  gaussian(x, z, -6.0, -1.0, 2.1, 0.40) -
+  gaussian(x, z, 6.0, -2.5, 1.8, 0.38) -
+  gaussian(x, z, -1.0, -11.0, 2.5, 0.54) -
+  gaussian(x, z, 4.0, -15.0, 2.0, 0.46) -
+  gaussian(x, z, -7.0, -19.0, 2.7, 0.60) -
+  gaussian(x, z, 10.0, -23.0, 2.2, 0.48) -
+  gaussian(x, z, 0.0, -25.0, 3.1, 0.64);
+
+const singleWheelBumps =
+  // Montículos pequeños
+  gaussian(x, z, -5.5, 14.5, 0.55, 0.24) +
+  gaussian(x, z, 3.0, 13.0, 0.48, 0.20) +
+  gaussian(x, z, 10.0, 12.0, 0.60, 0.28) +
+  gaussian(x, z, -10.0, 10.0, 0.52, 0.26) +
+  gaussian(x, z, -2.5, 9.0, 0.44, 0.18) +
+  gaussian(x, z, 6.5, 8.0, 0.58, 0.30) +
+  gaussian(x, z, -7.0, 5.0, 0.50, 0.25) +
+  gaussian(x, z, 3.5, 4.5, 0.42, 0.19) +
+  gaussian(x, z, 9.5, 3.0, 0.62, 0.31) +
+  gaussian(x, z, -11.0, 0.0, 0.54, 0.27) +
+  gaussian(x, z, -3.5, -1.0, 0.46, 0.22) +
+  gaussian(x, z, 4.0, -2.5, 0.50, 0.28) +
+  gaussian(x, z, 11.0, -4.0, 0.58, 0.30) +
+  gaussian(x, z, -8.0, -5.0, 0.45, 0.21) +
+  gaussian(x, z, -1.0, -6.5, 0.56, 0.29) +
+  gaussian(x, z, 7.0, -8.0, 0.48, 0.24) +
+  gaussian(x, z, -11.0, -9.5, 0.62, 0.32) +
+  gaussian(x, z, -4.5, -11.5, 0.50, 0.26) +
+  gaussian(x, z, 3.0, -12.0, 0.43, 0.20) +
+  gaussian(x, z, 10.0, -14.0, 0.56, 0.28) +
+  gaussian(x, z, -8.5, -15.5, 0.47, 0.23) +
+  gaussian(x, z, -1.5, -17.0, 0.60, 0.31) +
+  gaussian(x, z, 6.0, -18.0, 0.52, 0.27) +
+  gaussian(x, z, 11.0, -20.0, 0.44, 0.21) +
+  gaussian(x, z, -10.0, -21.5, 0.58, 0.30) +
+  gaussian(x, z, -4.0, -23.0, 0.48, 0.24) +
+  gaussian(x, z, 3.5, -24.0, 0.55, 0.29) +
+  gaussian(x, z, 9.0, -25.0, 0.46, 0.22) -
+
+  // Hundimientos pequeños
+  gaussian(x, z, 0.5, 11.0, 0.70, 0.20) -
+  gaussian(x, z, -8.0, 8.0, 0.65, 0.18) -
+  gaussian(x, z, 8.5, 6.0, 0.72, 0.22) -
+  gaussian(x, z, -5.0, 2.0, 0.60, 0.17) -
+  gaussian(x, z, 1.0, -3.5, 0.68, 0.21) -
+  gaussian(x, z, -10.0, -7.0, 0.75, 0.23) -
+  gaussian(x, z, 5.0, -10.0, 0.62, 0.18) -
+  gaussian(x, z, -6.0, -14.0, 0.70, 0.22) -
+  gaussian(x, z, 8.0, -17.0, 0.66, 0.20) -
+  gaussian(x, z, 0.0, -20.0, 0.78, 0.24) -
+  gaussian(x, z, -7.0, -24.5, 0.68, 0.21);
 
   const fine =
     Math.sin(x * 1.37 + z * 0.71) * 0.028 +

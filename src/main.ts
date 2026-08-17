@@ -13,7 +13,7 @@ const WHEEL_RADIUS = 0.182;
 const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
 const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
-const ARTICULATION_VISUAL_GAIN = 1.55;
+const ARTICULATION_VISUAL_GAIN = 3;
 const MAX_DRIVE_SPEED = 2.5;
 // Tren motriz: cuatro motores de 2,6 N·m, cada uno con reducción 50:1.
 // Rapier recibe fuerza longitudinal por rueda, por eso convertimos el par
@@ -188,7 +188,7 @@ async function start() {
     RAPIER.ColliderDesc.cuboid(0.43, 0.12, 0.46)
       // Aproxima los 50 kg del rover real y baja ligeramente el centro de
       // masa para reducir caballitos sin impedir que copie el terreno.
-      .setTranslation(0, -0.14, 0)
+      .setTranslation(0, -0.05, 0)
       .setDensity(240)
       .setFriction(1.1)
       .setRestitution(0),

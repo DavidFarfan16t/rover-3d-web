@@ -14,7 +14,7 @@ const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
 const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
 const ARTICULATION_VISUAL_GAIN = 1.55;
-const MAX_DRIVE_SPEED = 1.5;
+const MAX_DRIVE_SPEED = 1.85;
 // Tren motriz: cuatro motores de 2,6 N·m, cada uno con reducción 50:1.
 // Rapier recibe fuerza longitudinal por rueda, por eso convertimos el par
 // disponible mediante F = torque / radio. El valor ideal se limita después
@@ -36,6 +36,10 @@ const THROTTLE_RISE_RATE = 0.82;
 const THROTTLE_FALL_RATE = 2.2;
 const TRACTION_ASSIST_RISE_RATE = 1.1;
 const TRACTION_ASSIST_FALL_RATE = 2.5;
+const ANTI_WHEELIE_RISE_RATE = 7.0;
+const ANTI_WHEELIE_FALL_RATE = 2.2;
+const ANTI_WHEELIE_MIN_TORQUE_SCALE = 0.18;
+const CONTACT_RECOVERY_FORCE_PER_WHEEL = 36;
 const AUTOPILOT_BRAKE = 0.9;
 const MANUAL_BRAKE = 0.65;
 
@@ -136,8 +140,8 @@ async function start() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x071019);
-  scene.fog = new THREE.Fog(0x071019, 18, 45);
+  scene.background = new THREE.Color(0x160906);
+  scene.fog = new THREE.Fog(0x2b120b, 20, 48);
 
   const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.03, 100);
   camera.position.set(3.2, 2.15, 6.2);
@@ -149,8 +153,8 @@ async function start() {
   orbit.maxDistance = 12;
   orbit.target.set(0, 0.55, START.z);
 
-  scene.add(new THREE.HemisphereLight(0x9dd5ff, 0x28130c, 1.7));
-  const sun = new THREE.DirectionalLight(0xffead6, 3.8);
+  scene.add(new THREE.HemisphereLight(0xffcfaa, 0x28100a, 1.6));
+  const sun = new THREE.DirectionalLight(0xffd8b8, 3.8);
   sun.position.set(-6, 9, 5);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -159,20 +163,20 @@ async function start() {
   sun.shadow.camera.top = 11;
   sun.shadow.camera.bottom = -11;
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x4aaee8, 0.65);
+  const fill = new THREE.DirectionalLight(0x6c91ab, 0.48);
   fill.position.set(5, 3, -6);
   scene.add(fill);
 
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = FIXED_STEP;
 
-  createMarsTerrain(scene, world);
+  createMarsTerrain(scene, world, renderer);
 
   const chassisBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(START.x, START.y, START.z)
       .setLinearDamping(0.18)
-      .setAngularDamping(2.35)
+      .setAngularDamping(2.85)
       // El controlador raycast aplica fuerzas externas. Si Rapier duerme el
       // chasis mientras el GLB termina de cargar, esas fuerzas pueden no
       // arrancar el rover hasta hacer un reinicio manual.
@@ -184,7 +188,7 @@ async function start() {
     RAPIER.ColliderDesc.cuboid(0.43, 0.12, 0.46)
       // Aproxima los 50 kg del rover real y baja ligeramente el centro de
       // masa para reducir caballitos sin impedir que copie el terreno.
-      .setTranslation(0, -0.10, 0)
+      .setTranslation(0, -0.14, 0)
       .setDensity(240)
       .setFriction(1.1)
       .setRestitution(0),
@@ -265,6 +269,7 @@ async function start() {
   let driveBrake = 0;
   let tractionAssist = 0;
   let lowSpeedDemandTime = 0;
+  let antiWheelieAssist = 0;
   let leftRocker = 0;
   let rightRocker = 0;
   let followCamera = true;
@@ -273,6 +278,7 @@ async function start() {
   const tempQuaternion = new THREE.Quaternion();
   const driveQuaternion = new THREE.Quaternion();
   const driveForward = new THREE.Vector3();
+  const drivePitchAxis = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
   const cameraDesired = new THREE.Vector3();
 
@@ -753,7 +759,7 @@ async function start() {
       }
       const headingError = signedHeadingError(forward, mission.startForward);
       const steer = THREE.MathUtils.clamp(headingError / 0.42, -1, 1);
-      const targetSpeed = THREE.MathUtils.clamp(Math.max(0, remaining - 0.06) * 1.05, 0, 0.95);
+      const targetSpeed = THREE.MathUtils.clamp(Math.max(0, remaining - 0.06) * 1.05, 0, 1.18);
       const throttle = THREE.MathUtils.clamp((targetSpeed - speed) * 1.35, 0, AUTOPILOT_MAX_THROTTLE);
       const brake = THREE.MathUtils.clamp((speed - targetSpeed - 0.05) * 2.0, 0, 1);
       return { throttle: Math.abs(headingError) > 0.85 ? Math.min(0.14, throttle) : throttle, steer, brake };
@@ -789,7 +795,7 @@ async function start() {
     const steer = THREE.MathUtils.clamp(headingError / 0.48, -1, 1);
     // La velocidad objetivo cae progresivamente durante el último metro. Si
     // el rover llega más rápido de lo debido, deja de empujar y frena suave.
-    const targetSpeed = THREE.MathUtils.clamp(Math.max(0, distance - 0.28) * 0.82, 0, 0.92);
+    const targetSpeed = THREE.MathUtils.clamp(Math.max(0, distance - 0.28) * 0.90, 0, 1.14);
     const approach = THREE.MathUtils.clamp((targetSpeed - speed) * 1.4, 0, AUTOPILOT_MAX_THROTTLE);
     const brake = THREE.MathUtils.clamp((speed - targetSpeed - 0.05) * 2.0, 0, 1);
     const turnPenalty = THREE.MathUtils.clamp(1 - Math.abs(headingError) / 1.35, 0.12, 1);
@@ -824,6 +830,7 @@ async function start() {
     driveBrake = 0;
     tractionAssist = 0;
     lowSpeedDemandTime = 0;
+    antiWheelieAssist = 0;
     leftRocker = 0;
     rightRocker = 0;
     roverTrail.length = 0;
@@ -1008,7 +1015,46 @@ async function start() {
       (targetTractionAssist > tractionAssist ? TRACTION_ASSIST_RISE_RATE : TRACTION_ASSIST_FALL_RATE) * dt,
     );
     const forcePerWheel = THREE.MathUtils.lerp(CRUISE_ENGINE_FORCE, CLIMB_ENGINE_FORCE, tractionAssist);
-    const engineForce = speedNow < MAX_DRIVE_SPEED ? driveThrottle * -forcePerWheel : 0;
+
+    // Control anti-caballito: observa los contactos del lado que avanza y la
+    // velocidad de cabeceo. Si el frente comienza a levantarse, reduce el par
+    // rápidamente y lo devuelve de forma gradual cuando las ruedas apoyan.
+    const frontContacts = Number(vehicle.wheelIsInContact(0)) + Number(vehicle.wheelIsInContact(1));
+    const rearContacts = Number(vehicle.wheelIsInContact(2)) + Number(vehicle.wheelIsInContact(3));
+    const leadingContacts = driveDirection >= 0 ? frontContacts : rearContacts;
+    const trailingContacts = driveDirection >= 0 ? rearContacts : frontContacts;
+    const angularVelocity = chassisBody.angvel();
+    drivePitchAxis.set(1, 0, 0).applyQuaternion(driveQuaternion);
+    const noseUpRate =
+      (angularVelocity.x * drivePitchAxis.x + angularVelocity.y * drivePitchAxis.y + angularVelocity.z * drivePitchAxis.z) *
+      driveDirection;
+    const contactLift = Math.abs(driveThrottle) > 0.08 && trailingContacts > 0
+      ? leadingContacts === 0 ? 1 : leadingContacts === 1 ? 0.28 : 0
+      : 0;
+    const pitchLift = Math.abs(driveThrottle) > 0.08
+      ? THREE.MathUtils.clamp((noseUpRate - 0.16) / 0.82, 0, 1)
+      : 0;
+    const targetAntiWheelie = Math.max(contactLift, pitchLift);
+    antiWheelieAssist = moveTowards(
+      antiWheelieAssist,
+      targetAntiWheelie,
+      (targetAntiWheelie > antiWheelieAssist ? ANTI_WHEELIE_RISE_RATE : ANTI_WHEELIE_FALL_RATE) * dt,
+    );
+    const antiWheelieTorqueScale = THREE.MathUtils.lerp(1, ANTI_WHEELIE_MIN_TORQUE_SCALE, antiWheelieAssist);
+    const engineForce = speedNow < MAX_DRIVE_SPEED
+      ? driveThrottle * -forcePerWheel * antiWheelieTorqueScale
+      : 0;
+
+    // Impulso equivalente a una fuerza vertical de corta duración. Solo se
+    // activa mientras faltan contactos, por lo que no aplasta continuamente
+    // la suspensión cuando las cuatro ruedas ya están apoyadas.
+    const missingContacts = 4 - frontContacts - rearContacts;
+    if (missingContacts > 0) {
+      chassisBody.applyImpulse(
+        { x: 0, y: -CONTACT_RECOVERY_FORCE_PER_WHEEL * missingContacts * dt, z: 0 },
+        true,
+      );
+    }
 
     if (Math.abs(driveThrottle) > 0.001 || steerInput !== 0) chassisBody.wakeUp();
 
@@ -1130,7 +1176,144 @@ async function start() {
   });
 }
 
-function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
+function createMarsSurfaceTextures(renderer: THREE.WebGLRenderer) {
+  const textureWidth = 1024;
+  const textureHeight = 1536;
+  const albedoCanvas = document.createElement("canvas");
+  const bumpCanvas = document.createElement("canvas");
+  albedoCanvas.width = bumpCanvas.width = textureWidth;
+  albedoCanvas.height = bumpCanvas.height = textureHeight;
+  const albedoContext = albedoCanvas.getContext("2d")!;
+  const bumpContext = bumpCanvas.getContext("2d")!;
+  const albedoImage = albedoContext.createImageData(textureWidth, textureHeight);
+  const bumpImage = bumpContext.createImageData(textureWidth, textureHeight);
+
+  // Generador determinista: el aspecto del suelo no cambia en cada recarga.
+  let seed = 0x4d415253;
+  const random = () => {
+    seed |= 0;
+    seed = seed + 0x6d2b79f5 | 0;
+    let value = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    value = value + Math.imul(value ^ value >>> 7, 61 | value) ^ value;
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+
+  const dark = { r: 102, g: 39, b: 22 };
+  const light = { r: 205, g: 105, b: 55 };
+  let offset = 0;
+  for (let y = 0; y < textureHeight; y += 1) {
+    const v = y / (textureHeight - 1);
+    for (let x = 0; x < textureWidth; x += 1) {
+      const u = x / (textureWidth - 1);
+      const broad =
+        Math.sin(u * 13.1 + v * 4.7) * 0.10 +
+        Math.cos(v * 19.3 - u * 3.8) * 0.08 +
+        Math.sin((u + v) * 41.0) * 0.035;
+      const fine =
+        Math.sin(u * 173.0 + v * 29.0) * 0.020 +
+        Math.cos(v * 211.0 - u * 47.0) * 0.016;
+      const grain = (random() + random() + random() - 1.5) / 1.5;
+      const tone = THREE.MathUtils.clamp(0.52 + broad + fine + grain * 0.065, 0.08, 0.96);
+
+      albedoImage.data[offset] = dark.r + (light.r - dark.r) * tone;
+      albedoImage.data[offset + 1] = dark.g + (light.g - dark.g) * tone;
+      albedoImage.data[offset + 2] = dark.b + (light.b - dark.b) * tone;
+      albedoImage.data[offset + 3] = 255;
+
+      const relief = THREE.MathUtils.clamp(0.50 + fine * 2.4 + grain * 0.16, 0, 1) * 255;
+      bumpImage.data[offset] = relief;
+      bumpImage.data[offset + 1] = relief;
+      bumpImage.data[offset + 2] = relief;
+      bumpImage.data[offset + 3] = 255;
+      offset += 4;
+    }
+  }
+  albedoContext.putImageData(albedoImage, 0, 0);
+  bumpContext.putImageData(bumpImage, 0, 0);
+
+  // Motas minerales, grava muy fina y vetas de viento integradas en la
+  // textura. Son detalle visual: no agregan obstáculos encima del terreno.
+  for (let index = 0; index < 2100; index += 1) {
+    const x = random() * textureWidth;
+    const y = random() * textureHeight;
+    const radius = 0.35 + random() * 1.8;
+    const opacity = 0.08 + random() * 0.20;
+    albedoContext.beginPath();
+    albedoContext.ellipse(x, y, radius * (0.7 + random()), radius, random() * Math.PI, 0, Math.PI * 2);
+    albedoContext.fillStyle = random() > 0.28
+      ? `rgba(48, 18, 10, ${opacity})`
+      : `rgba(244, 151, 84, ${opacity * 0.7})`;
+    albedoContext.fill();
+
+    bumpContext.beginPath();
+    bumpContext.arc(x, y, radius, 0, Math.PI * 2);
+    const bumpShade = random() > 0.5 ? 65 : 205;
+    const bumpOpacity = bumpShade === 65 ? 0.34 : 0.20;
+    bumpContext.fillStyle = `rgba(${bumpShade}, ${bumpShade}, ${bumpShade}, ${bumpOpacity})`;
+    bumpContext.fill();
+  }
+
+  for (let index = 0; index < 95; index += 1) {
+    const x = random() * textureWidth;
+    const y = random() * textureHeight;
+    const radius = 2.0 + random() * 7.5;
+    const flatten = 0.42 + random() * 0.36;
+    const angle = random() * Math.PI;
+
+    albedoContext.save();
+    albedoContext.translate(x, y);
+    albedoContext.rotate(angle);
+    albedoContext.scale(1, flatten);
+    const craterColor = albedoContext.createRadialGradient(0, 0, 0, 0, 0, radius);
+    craterColor.addColorStop(0, "rgba(43, 14, 8, .42)");
+    craterColor.addColorStop(0.58, "rgba(61, 19, 10, .30)");
+    craterColor.addColorStop(0.78, "rgba(232, 126, 65, .20)");
+    craterColor.addColorStop(1, "rgba(232, 126, 65, 0)");
+    albedoContext.fillStyle = craterColor;
+    albedoContext.beginPath();
+    albedoContext.arc(0, 0, radius, 0, Math.PI * 2);
+    albedoContext.fill();
+    albedoContext.restore();
+
+    bumpContext.save();
+    bumpContext.translate(x, y);
+    bumpContext.rotate(angle);
+    bumpContext.scale(1, flatten);
+    const craterRelief = bumpContext.createRadialGradient(0, 0, 0, 0, 0, radius);
+    craterRelief.addColorStop(0, "rgba(38, 38, 38, .72)");
+    craterRelief.addColorStop(0.58, "rgba(72, 72, 72, .48)");
+    craterRelief.addColorStop(0.80, "rgba(225, 225, 225, .46)");
+    craterRelief.addColorStop(1, "rgba(128, 128, 128, 0)");
+    bumpContext.fillStyle = craterRelief;
+    bumpContext.beginPath();
+    bumpContext.arc(0, 0, radius, 0, Math.PI * 2);
+    bumpContext.fill();
+    bumpContext.restore();
+  }
+
+  for (let index = 0; index < 150; index += 1) {
+    const x = random() * textureWidth;
+    const y = random() * textureHeight;
+    const length = 18 + random() * 85;
+    albedoContext.beginPath();
+    albedoContext.moveTo(x, y);
+    albedoContext.lineTo(x + length, y + length * (0.04 + random() * 0.05));
+    albedoContext.strokeStyle = `rgba(255, 177, 108, ${0.018 + random() * 0.025})`;
+    albedoContext.lineWidth = 0.5 + random();
+    albedoContext.stroke();
+  }
+
+  const albedo = new THREE.CanvasTexture(albedoCanvas);
+  const bump = new THREE.CanvasTexture(bumpCanvas);
+  albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  bump.anisotropy = albedo.anisotropy;
+  albedo.minFilter = THREE.LinearMipmapLinearFilter;
+  bump.minFilter = THREE.LinearMipmapLinearFilter;
+  return { albedo, bump };
+}
+
+function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World, renderer: THREE.WebGLRenderer) {
   const { width, depth, centerZ } = TERRAIN;
   const xSegments = 84;
   const zSegments = 132;
@@ -1138,11 +1321,13 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
   const vertexCount = rowSize * (zSegments + 1);
   const vertices = new Float32Array(vertexCount * 3);
   const colors = new Float32Array(vertexCount * 3);
+  const uvs = new Float32Array(vertexCount * 2);
   const indices = new Uint32Array(xSegments * zSegments * 6);
 
   let vertexOffset = 0;
-  const darkSand = new THREE.Color(0x6f2417);
-  const lightSand = new THREE.Color(0xc15b2d);
+  let uvOffset = 0;
+  const darkSand = new THREE.Color(0xc08a74);
+  const lightSand = new THREE.Color(0xffd1ad);
   const vertexColor = new THREE.Color();
 
   for (let zIndex = 0; zIndex <= zSegments; zIndex += 1) {
@@ -1160,6 +1345,10 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
       colors[vertexOffset + 1] = vertexColor.g;
       colors[vertexOffset + 2] = vertexColor.b;
       vertexOffset += 3;
+
+      uvs[uvOffset] = xIndex / xSegments;
+      uvs[uvOffset + 1] = 1 - zIndex / zSegments;
+      uvOffset += 2;
     }
   }
 
@@ -1184,15 +1373,20 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 
+  const surfaceTextures = createMarsSurfaceTextures(renderer);
   const terrain = new THREE.Mesh(
     geometry,
     new THREE.MeshStandardMaterial({
+      map: surfaceTextures.albedo,
+      bumpMap: surfaceTextures.bump,
+      bumpScale: 0.045,
       vertexColors: true,
-      roughness: 0.98,
+      roughness: 0.96,
       metalness: 0,
     }),
   );

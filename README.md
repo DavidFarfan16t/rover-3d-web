@@ -39,6 +39,7 @@ Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para
 - Con ruedas de 0,182 m de radio, el tren motriz podría producir teóricamente unos **586 N por rueda**. La simulación limita esa cifra a unos **123 N por rueda**, de acuerdo con la masa y el agarre, para evitar patinaje y vuelcos irreales.
 - En terreno normal se usan **78 N por rueda**. La reserva de par aumenta progresivamente hasta el límite de agarre cuando el rover apunta cuesta arriba o permanece casi detenido bajo aceleración.
 - El piloto automático puede solicitar hasta el **88 %** del acelerador cuando una pendiente reduce su velocidad; no depende de mantener pulsada la tecla `W` para usar la asistencia de subida.
+- Después de detenerse en un waypoint, la reserva de tracción se activa con mayor rapidez y conserva suficiente acelerador para reiniciar la marcha en subida.
 - Un limitador suave reduce el empuje durante los últimos 0,32 m/s antes de la velocidad máxima, evitando los tirones de un corte instantáneo.
 - El piloto automático reduce su velocidad durante el último metro y aplica un freno progresivo antes de cada waypoint.
 - En curvas conserva un acelerador mínimo y evita frenar hasta que el rover esté próximo y alineado con el waypoint, para impedir que se detenga durante la corrección de rumbo.

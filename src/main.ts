@@ -33,9 +33,9 @@ const TRACTION_LIMIT_PER_WHEEL_N = ROVER_MASS_KG * 9.81 * TIRE_TRACTION_COEFFICI
 const CRUISE_ENGINE_FORCE = 78;
 const CLIMB_ENGINE_FORCE = Math.min(THEORETICAL_WHEEL_FORCE_N, TRACTION_LIMIT_PER_WHEEL_N);
 const AUTOPILOT_MAX_THROTTLE = 0.88;
-const THROTTLE_RISE_RATE = 1.1;
+const THROTTLE_RISE_RATE = 1.8;
 const THROTTLE_FALL_RATE = 2.2;
-const TRACTION_ASSIST_RISE_RATE = 1.1;
+const TRACTION_ASSIST_RISE_RATE = 2.5;
 const TRACTION_ASSIST_FALL_RATE = 2.5;
 const ANTI_WHEELIE_RISE_RATE = 7.0;
 const ANTI_WHEELIE_FALL_RATE = 2.2;
@@ -833,7 +833,7 @@ async function start() {
     );
     const minimumCurveThrottle =
       distance > 0.65 && speed < Math.max(0.35, targetSpeed * 0.92)
-        ? THREE.MathUtils.lerp(0.18, 0.36, curveAmount)
+        ? THREE.MathUtils.lerp(0.28, 0.48, curveAmount)
         : 0;
     const throttle = Math.max(approach, minimumCurveThrottle);
 
@@ -1046,13 +1046,13 @@ async function start() {
     const uphillComponent = driveForward.y * driveDirection;
     const uphillAssist = THREE.MathUtils.clamp((uphillComponent - 0.025) / 0.27, 0, 1);
     const demandingTraction =
-      Math.abs(requestedThrottle) > 0.28 &&
-      speedNow < 0.42 &&
-      driveBrake < 0.05;
+      Math.abs(requestedThrottle) > 0.18 &&
+      speedNow < 0.55 &&
+      driveBrake < 0.08;
     lowSpeedDemandTime = demandingTraction
       ? Math.min(lowSpeedDemandTime + dt, 1.5)
       : Math.max(lowSpeedDemandTime - dt * 2.2, 0);
-    const stallAssist = THREE.MathUtils.smoothstep(lowSpeedDemandTime, 0.35, 1.1);
+    const stallAssist = THREE.MathUtils.smoothstep(lowSpeedDemandTime, 0.12, 0.55);
     const targetTractionAssist = Math.max(uphillAssist, stallAssist);
     tractionAssist = moveTowards(
       tractionAssist,

@@ -41,6 +41,7 @@ Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para
 - El piloto automático puede solicitar hasta el **88 %** del acelerador cuando una pendiente reduce su velocidad; no depende de mantener pulsada la tecla `W` para usar la asistencia de subida.
 - Un limitador suave reduce el empuje durante los últimos 0,32 m/s antes de la velocidad máxima, evitando los tirones de un corte instantáneo.
 - El piloto automático reduce su velocidad durante el último metro y aplica un freno progresivo antes de cada waypoint.
+- En curvas conserva un acelerador mínimo y evita frenar hasta que el rover esté próximo y alineado con el waypoint, para impedir que se detenga durante la corrección de rumbo.
 - El reinicio limpia velocidad, giro, fuerzas, frenos y estado visual de la suspensión.
 
 El vehículo actual utiliza un controlador de ruedas por **ray casting**: cada rueda física

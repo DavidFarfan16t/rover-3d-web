@@ -4,7 +4,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import RAPIER from "@dimforge/rapier3d-compat";
 
-const MODEL_URL = "/models/rover_web_optimizado_v2.glb";
+const MODEL_URL = `${import.meta.env.BASE_URL}models/rover_web_optimizado_v2.glb`;
 const PHYSICS_HZ = 120;
 const FIXED_STEP = 1 / PHYSICS_HZ;
 const MAX_FRAME_DELTA = 0.08;
@@ -14,6 +14,7 @@ const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
 const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
 const MAX_INDEPENDENT_ROCKER_ANGLE = 0.52;
+const MAX_DIFFERENTIAL_ANGLE = 0.35;
 const MAX_VISUAL_ROLL = 0.40;
 const MAX_DRIVE_SPEED = 2.5;
 // Tren motriz: cuatro motores de 2,6 N·m, cada uno con reducción 50:1.
@@ -87,6 +88,15 @@ type ControlBinding = {
   node: THREE.Object3D;
   base: THREE.Quaternion;
   axis: THREE.Vector3;
+};
+
+type BallLinkBinding = {
+  node: THREE.Object3D;
+  target: THREE.Object3D;
+  base: THREE.Quaternion;
+  baseScale: THREE.Vector3;
+  restDirection: THREE.Vector3;
+  restLength: number;
 };
 
 type Waypoint = { id: string; label: string; x: number; z: number };
@@ -256,13 +266,42 @@ async function start() {
     };
   };
 
+  const bindBallLink = (controlName: string, targetName: string): BallLinkBinding | null => {
+    const node = model.getObjectByName(controlName);
+    const target = model.getObjectByName(targetName);
+    if (!node || !target || !node.parent) {
+      console.warn(`No se pudo enlazar la rótula visual ${controlName} -> ${targetName}`);
+      return null;
+    }
+
+    const startWorld = node.getWorldPosition(new THREE.Vector3());
+    const targetWorld = target.getWorldPosition(new THREE.Vector3());
+    const startInParent = node.parent.worldToLocal(startWorld.clone());
+    const targetInParent = node.parent.worldToLocal(targetWorld.clone());
+    const restDirection = targetInParent.sub(startInParent);
+    const restLength = restDirection.length();
+    if (restLength < 0.000001) return null;
+
+    return {
+      node,
+      target,
+      base: node.quaternion.clone(),
+      baseScale: node.scale.clone(),
+      restDirection: restDirection.multiplyScalar(1 / restLength),
+      restLength,
+    };
+  };
+
   const wheels = ["WHEEL_FL", "WHEEL_FR", "WHEEL_RL", "WHEEL_RR"]
     .map((name) => bind(name, new THREE.Vector3(1, 0, 0)));
   const steeringControls = ["STEER_FL_CTRL", "STEER_FR_CTRL", "STEER_RL_CTRL", "STEER_RR_CTRL"]
     .map((name) => bind(name, new THREE.Vector3(0, 1, 0)));
   const suspensionControls = [bind("SUSP_L_CTRL", new THREE.Vector3(1, 0, 0)), bind("SUSP_R_CTRL", new THREE.Vector3(1, 0, 0))];
-  const differential = model.getObjectByName("DIFF_CTRL");
-  const differentialBase = differential?.quaternion.clone();
+  const differentialControl = bind("DIFF_CTRL", new THREE.Vector3(0, 1, 0));
+  const differentialLinks = [
+    bindBallLink("LINK_L_CTRL", "LINK_L_TARGET"),
+    bindBallLink("LINK_R_CTRL", "LINK_R_TARGET"),
+  ];
 
   const neutralWheelCenters = wheels.map((wheel) => {
     const centerPosition = new THREE.Vector3();
@@ -286,6 +325,12 @@ async function start() {
   let accumulator = 0;
   const clock = new THREE.Clock();
   const tempQuaternion = new THREE.Quaternion();
+  const linkStartWorld = new THREE.Vector3();
+  const linkTargetWorld = new THREE.Vector3();
+  const linkStartInParent = new THREE.Vector3();
+  const linkTargetInParent = new THREE.Vector3();
+  const linkDirection = new THREE.Vector3();
+  const linkSwing = new THREE.Quaternion();
   const driveQuaternion = new THREE.Quaternion();
   const driveForward = new THREE.Vector3();
   const drivePitchAxis = new THREE.Vector3();
@@ -1010,6 +1055,29 @@ async function start() {
     binding.node.quaternion.copy(binding.base).premultiply(tempQuaternion);
   };
 
+  const alignBallLink = (binding: BallLinkBinding | null) => {
+    if (!binding || !binding.node.parent) return;
+
+    binding.node.getWorldPosition(linkStartWorld);
+    binding.target.getWorldPosition(linkTargetWorld);
+    binding.node.parent.worldToLocal(linkStartInParent.copy(linkStartWorld));
+    binding.node.parent.worldToLocal(linkTargetInParent.copy(linkTargetWorld));
+    linkDirection.subVectors(linkTargetInParent, linkStartInParent);
+    const length = linkDirection.length();
+    if (length < 0.000001) return;
+
+    linkDirection.multiplyScalar(1 / length);
+    linkSwing.setFromUnitVectors(binding.restDirection, linkDirection);
+    binding.node.quaternion.copy(binding.base).premultiply(linkSwing);
+
+    // Los dos tirantes del GLB están modelados a lo largo de su eje local X.
+    // El ajuste longitudinal evita que la unión se abra cuando ambos laterales
+    // se resuelven de forma independiente; la orientación sigue siendo libre,
+    // como en una rótula esférica.
+    binding.node.scale.copy(binding.baseScale);
+    binding.node.scale.x *= length / binding.restLength;
+  };
+
   const moveTowards = (current: number, target: number, maxDelta: number) => {
     if (current < target) return Math.min(current + maxDelta, target);
     return Math.max(current - maxDelta, target);
@@ -1200,10 +1268,6 @@ async function start() {
     steeringControls.forEach((control, index) => applyBinding(control, index < 2 ? steering : -steering * 0.68));
     wheels.forEach((wheel, index) => applyBinding(wheel, vehicle.wheelRotation(index) ?? 0));
 
-    // El diferencial permanece en su orientación original: ya no combina ni
-    // limita el movimiento de los dos laterales.
-    if (differential && differentialBase) differential.quaternion.copy(differentialBase);
-
     // Cinemática visual independiente. Cada SUSP_* rota como un conjunto
     // rígido desde su propio pivote; no se traslada STEER_* ni ninguna rueda,
     // por lo que los soportes y brazos nunca pueden abrirse entre sí.
@@ -1221,6 +1285,18 @@ async function start() {
     setKinematicVisualPose(position.x, position.z, visualRoll, 0);
     applyBinding(suspensionControls[0], leftRocker);
     applyBinding(suspensionControls[1], rightRocker);
+    // El pivote diferencial acompaña visualmente la diferencia entre ambos
+    // balancines. No modifica sus ángulos ni participa en la física, por lo que
+    // un lateral nunca levanta la rueda del contrario.
+    const differentialAngle = THREE.MathUtils.clamp(
+      (rightRocker - leftRocker) * 0.2,
+      -MAX_DIFFERENTIAL_ANGLE,
+      MAX_DIFFERENTIAL_ANGLE,
+    );
+    applyBinding(differentialControl, differentialAngle);
+    model.updateMatrixWorld(true);
+    differentialLinks.forEach(alignBallLink);
+    model.updateMatrixWorld(true);
     sampleTerrainUnderVisualWheels();
     const visualHeight = wheelWorldPositions.reduce(
       (sum, wheelPosition, index) => sum + terrainWheelTargets[index] - wheelPosition.y,

@@ -22,7 +22,9 @@ const PHYSICS_TILE_RADIUS = 1;
 const MAX_INDEPENDENT_ROCKER_ANGLE = 0.52;
 const MAX_DIFFERENTIAL_ANGLE = 0.35;
 const MAX_VISUAL_ROLL = 0.40;
-const MAX_DRIVE_SPEED = 2.5;
+const NORMAL_MAX_DRIVE_SPEED = 2.5;
+const TURBO_TARGET_SPEED_KMH = 18;
+const TURBO_MAX_DRIVE_SPEED = TURBO_TARGET_SPEED_KMH / 3.6;
 // Tren motriz: cuatro motores de 2,6 N·m, cada uno con reducción 50:1.
 // Rapier recibe fuerza longitudinal por rueda, por eso convertimos el par
 // disponible mediante F = torque / radio. El valor ideal se limita después
@@ -190,6 +192,23 @@ type MissionBlock =
   | { id: string; type: "waypoint"; waypointId: string };
 type DriveCommand = { throttle: number; steer: number; brake: number };
 
+// El botón se crea desde TypeScript para que este cambio solo requiera
+// reemplazar main.ts. Se inserta entre los controles de cámara y reinicio.
+const turboButton = (() => {
+  const existing = document.querySelector<HTMLButtonElement>("#turbo-button");
+  if (existing) return existing;
+
+  const button = document.createElement("button");
+  button.id = "turbo-button";
+  button.className = "panel-button secondary";
+  button.type = "button";
+  button.textContent = `TURBO ${TURBO_TARGET_SPEED_KMH} KM/H: APAGADO`;
+  button.title = "Acelera automáticamente hacia delante hasta 18 km/h";
+  button.setAttribute("aria-pressed", "false");
+  document.querySelector<HTMLButtonElement>("#reset-button")?.before(button);
+  return button;
+})();
+
 const ui = {
   speed: document.querySelector<HTMLElement>("#speed")!,
   steering: document.querySelector<HTMLElement>("#steering")!,
@@ -201,6 +220,7 @@ const ui = {
   loading: document.querySelector<HTMLElement>("#loading")!,
   loadingStatus: document.querySelector<HTMLElement>("#loading-status")!,
   cameraButton: document.querySelector<HTMLButtonElement>("#camera-button")!,
+  turboButton,
   resetButton: document.querySelector<HTMLButtonElement>("#reset-button")!,
   missionPlanner: document.querySelector<HTMLElement>("#mission-planner")!,
   missionToggle: document.querySelector<HTMLButtonElement>("#mission-toggle")!,
@@ -412,6 +432,7 @@ async function start() {
   let rightRocker = 0;
   let visualRoll = 0;
   let followCamera = true;
+  let turboMode = false;
   let accumulator = 0;
   const clock = new THREE.Clock();
   const tempQuaternion = new THREE.Quaternion();
@@ -1013,7 +1034,23 @@ async function start() {
     return { throttle, steer, brake: 0 };
   };
 
+  const setTurboMode = (enabled: boolean) => {
+    turboMode = enabled;
+    ui.turboButton.classList.toggle("secondary", !enabled);
+    ui.turboButton.textContent = `TURBO ${TURBO_TARGET_SPEED_KMH} KM/H: ${enabled ? "ACTIVO" : "APAGADO"}`;
+    ui.turboButton.setAttribute("aria-pressed", String(enabled));
+
+    if (enabled) {
+      // Si estaba retrocediendo, se libera S antes de aplicar avance total.
+      pressed.delete("KeyS");
+      document.querySelectorAll<HTMLButtonElement>('[data-key="KeyS"]').forEach((button) => button.classList.remove("active"));
+      pauseMission("TURBO MANUAL");
+      chassisBody.wakeUp();
+    }
+  };
+
   const setPressed = (code: string, value: boolean) => {
+    if (value && code === "KeyS" && turboMode) setTurboMode(false);
     if (value) pressed.add(code);
     else pressed.delete(code);
     if (value && ["KeyW", "KeyA", "KeyS", "KeyD"].includes(code)) {
@@ -1031,6 +1068,7 @@ async function start() {
   };
 
   const resetRover = (preserveMission = false) => {
+    setTurboMode(false);
     ["KeyW", "KeyA", "KeyS", "KeyD"].forEach((code) => setPressed(code, false));
     accumulator = 0;
     chassisBody.setTranslation(START, true);
@@ -1066,10 +1104,14 @@ async function start() {
     if (event.code === "KeyC" && !event.repeat) toggleCamera();
   });
   window.addEventListener("keyup", (event) => setPressed(event.code, false));
-  window.addEventListener("blur", () => ["KeyW", "KeyA", "KeyS", "KeyD"].forEach((code) => setPressed(code, false)));
+  window.addEventListener("blur", () => {
+    setTurboMode(false);
+    ["KeyW", "KeyA", "KeyS", "KeyD"].forEach((code) => setPressed(code, false));
+  });
   document.addEventListener("visibilitychange", () => {
     // Evita acumular un salto de tiempo al volver a la pestaña.
     clock.getDelta();
+    if (document.hidden) setTurboMode(false);
     if (!document.hidden) chassisBody.wakeUp();
   });
   document.querySelectorAll<HTMLButtonElement>("[data-key]").forEach((button) => {
@@ -1084,6 +1126,7 @@ async function start() {
     button.addEventListener("pointercancel", release);
   });
   ui.cameraButton.addEventListener("click", toggleCamera);
+  ui.turboButton.addEventListener("click", () => setTurboMode(!turboMode));
   ui.resetButton.addEventListener("click", () => resetRover());
 
   const redrawCurrentMap = () => drawMissionMap(chassisBody.translation(), chassisBody.rotation());
@@ -1222,15 +1265,19 @@ async function start() {
   };
 
   const updateVehicle = (dt: number) => {
-    const manualThrottle = Number(pressed.has("KeyW")) - Number(pressed.has("KeyS"));
+    const keyboardThrottle = Number(pressed.has("KeyW")) - Number(pressed.has("KeyS"));
+    const manualThrottle = turboMode ? 1 : keyboardThrottle;
     const manualSteer = Number(pressed.has("KeyA")) - Number(pressed.has("KeyD"));
     const autonomous = getMissionCommand();
     const autopilotActive = mission.running && !mission.paused;
     const requestedThrottle = autopilotActive ? autonomous.throttle : manualThrottle;
     const steerInput = autopilotActive ? autonomous.steer : manualSteer;
     const speedNow = Math.abs(vehicle.currentVehicleSpeed());
-    const speedRatio = THREE.MathUtils.clamp(speedNow / MAX_DRIVE_SPEED, 0, 1);
-    const steeringLimit = THREE.MathUtils.lerp(0.47, 0.31, speedRatio);
+    const activeSpeedLimit = turboMode ? TURBO_MAX_DRIVE_SPEED : NORMAL_MAX_DRIVE_SPEED;
+    const speedRatio = THREE.MathUtils.clamp(speedNow / activeSpeedLimit, 0, 1);
+    // A 18 km/h la dirección máxima se reduce para que una pulsación brusca
+    // de A/D no haga volcar el rover, pero continúa siendo maniobrable.
+    const steeringLimit = THREE.MathUtils.lerp(0.47, turboMode ? 0.16 : 0.31, speedRatio);
     steering = THREE.MathUtils.damp(steering, steerInput * steeringLimit, 7, dt);
     const sameDirection = Math.sign(requestedThrottle) === Math.sign(driveThrottle) || Math.abs(driveThrottle) < 0.001;
     const increasing = sameDirection && Math.abs(requestedThrottle) > Math.abs(driveThrottle);
@@ -1239,7 +1286,9 @@ async function start() {
 
     const targetBrake = autopilotActive
       ? autonomous.brake * AUTOPILOT_BRAKE
-      : Math.abs(manualThrottle) < 0.01 ? MANUAL_BRAKE : 0;
+      : turboMode
+        ? THREE.MathUtils.clamp((speedNow - TURBO_MAX_DRIVE_SPEED) * 1.8, 0, 0.55)
+        : Math.abs(manualThrottle) < 0.01 ? MANUAL_BRAKE : 0;
     driveBrake = moveTowards(driveBrake, targetBrake, (targetBrake > driveBrake ? 1.8 : 5.0) * dt);
 
     // Reserva progresiva de par: se activa al apuntar cuesta arriba o cuando
@@ -1295,7 +1344,7 @@ async function start() {
     // Limitador suave: conserva todo el empuje hasta los últimos 0,32 m/s y
     // lo reduce progresivamente al acercarse al máximo. Así el rover acelera
     // con decisión sin oscilar por un corte brusco de motor.
-    const speedLimitFactor = THREE.MathUtils.smoothstep(MAX_DRIVE_SPEED - speedNow, 0, 0.32);
+    const speedLimitFactor = THREE.MathUtils.smoothstep(activeSpeedLimit - speedNow, 0, 0.32);
     const engineForce = driveThrottle * -forcePerWheel * antiWheelieTorqueScale * speedLimitFactor;
 
     // Impulso equivalente a una fuerza vertical de corta duración. Solo se

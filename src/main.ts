@@ -82,6 +82,33 @@ const ROVER_COMPONENT_MATCHERS: Array<[RoverComponentName, RegExp]> = [
   ["chassis", /CHASIS/],
 ];
 
+// [X, Z, radio, altura]. Son montículos pequeños y suaves repartidos por
+// todo el mapa. Como gaussian() usa distancia periódica, también continúan
+// correctamente cuando uno queda cerca de un borde del mundo envolvente.
+const SCATTERED_SMALL_MOUNDS: ReadonlyArray<readonly [number, number, number, number]> = [
+  [-11.6, 14.2, 0.72, 0.18],
+  [-7.8, 11.8, 0.56, 0.14],
+  [-2.9, 15.0, 0.46, 0.12],
+  [4.7, 12.7, 0.66, 0.17],
+  [10.8, 15.3, 0.53, 0.15],
+  [12.1, 8.2, 0.74, 0.20],
+  [7.5, 6.1, 0.48, 0.13],
+  [-9.9, 6.3, 0.63, 0.17],
+  [-12.1, 1.0, 0.51, 0.14],
+  [9.8, 0.1, 0.68, 0.19],
+  [-8.5, -4.7, 0.56, 0.15],
+  [11.8, -5.8, 0.47, 0.12],
+  [-11.2, -10.1, 0.71, 0.20],
+  [8.9, -11.8, 0.61, 0.17],
+  [-8.1, -16.3, 0.50, 0.14],
+  [2.8, -18.5, 0.70, 0.19],
+  [10.8, -20.3, 0.55, 0.16],
+  [-12.2, -23.3, 0.65, 0.18],
+  [-4.1, -24.9, 0.46, 0.12],
+  [5.9, -25.0, 0.59, 0.16],
+  [13.1, -24.0, 0.43, 0.11],
+];
+
 const positiveModulo = (value: number, period: number) => ((value % period) + period) % period;
 
 const wrapCoordinate = (value: number, minimum: number, period: number) =>
@@ -129,6 +156,11 @@ const terrainHeight = (x: number, z: number) => {
     gaussian(x, z, 0.55, -4.80, 0.52, 0.33) +
     gaussian(x, z, -0.55, -6.85, 0.49, 0.31);
 
+  let scatteredSmallBumps = 0;
+  for (const [cx, cz, radius, height] of SCATTERED_SMALL_MOUNDS) {
+    scatteredSmallBumps += gaussian(x, z, cx, cz, radius, height);
+  }
+
   const fine =
     Math.sin(u * 7 + v * 5) * 0.028 +
     Math.sin(u * 11 - v * 8) * 0.016;
@@ -138,7 +170,7 @@ const terrainHeight = (x: number, z: number) => {
     periodicDelta(z, START.z, TERRAIN.depth),
   );
   const terrainBlend = THREE.MathUtils.smoothstep(spawnDistance, 1.35, 3.4);
-  return (rolling + formations + singleWheelBumps + fine) * terrainBlend;
+  return (rolling + formations + singleWheelBumps + scatteredSmallBumps + fine) * terrainBlend;
 };
 
 type ControlBinding = {

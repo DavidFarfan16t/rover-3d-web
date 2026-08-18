@@ -4,7 +4,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import RAPIER from "@dimforge/rapier3d-compat";
 
-const MODEL_URL = "/models/rover_web_optimizado_v2.glb";
+const MODEL_URL = `${import.meta.env.BASE_URL}models/rover_web_optimizado_v2.glb`;
 const PHYSICS_HZ = 120;
 const FIXED_STEP = 1 / PHYSICS_HZ;
 const MAX_FRAME_DELTA = 0.08;

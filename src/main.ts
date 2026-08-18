@@ -13,6 +13,12 @@ const WHEEL_RADIUS = 0.182;
 const SUSPENSION_REST = 0.23;
 const START = { x: 0, y: 0.62, z: 4.2 };
 const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
+const TERRAIN_X_MIN = -TERRAIN.width / 2;
+const TERRAIN_X_MAX = TERRAIN.width / 2;
+const TERRAIN_Z_MIN = TERRAIN.centerZ - TERRAIN.depth / 2;
+const TERRAIN_Z_MAX = TERRAIN.centerZ + TERRAIN.depth / 2;
+const VISUAL_TILE_RADIUS = 2;
+const PHYSICS_TILE_RADIUS = 1;
 const MAX_INDEPENDENT_ROCKER_ANGLE = 0.52;
 const MAX_DIFFERENTIAL_ANGLE = 0.35;
 const MAX_VISUAL_ROLL = 0.40;
@@ -76,17 +82,34 @@ const ROVER_COMPONENT_MATCHERS: Array<[RoverComponentName, RegExp]> = [
   ["chassis", /CHASIS/],
 ];
 
+const positiveModulo = (value: number, period: number) => ((value % period) + period) % period;
+
+const wrapCoordinate = (value: number, minimum: number, period: number) =>
+  minimum + positiveModulo(value - minimum, period);
+
+// Diferencia más corta entre dos posiciones de un mundo cuyos bordes están
+// unidos. El resultado siempre queda entre -periodo/2 y +periodo/2.
+const periodicDelta = (value: number, reference: number, period: number) =>
+  positiveModulo(value - reference + period / 2, period) - period / 2;
+
+const wrapTerrainX = (x: number) => wrapCoordinate(x, TERRAIN_X_MIN, TERRAIN.width);
+const wrapTerrainZ = (z: number) => wrapCoordinate(z, TERRAIN_Z_MIN, TERRAIN.depth);
+
 const gaussian = (x: number, z: number, cx: number, cz: number, radius: number, height: number) => {
-  const dx = x - cx;
-  const dz = z - cz;
+  const dx = periodicDelta(x, cx, TERRAIN.width);
+  const dz = periodicDelta(z, cz, TERRAIN.depth);
   return height * Math.exp(-(dx * dx + dz * dz) / (2 * radius * radius));
 };
 
 const terrainHeight = (x: number, z: number) => {
+  // Todas las frecuencias son enteras dentro del periodo X/Z. De esta manera
+  // la altura y su pendiente coinciden exactamente en los bordes opuestos.
+  const u = ((x - TERRAIN_X_MIN) / TERRAIN.width) * Math.PI * 2;
+  const v = ((z - TERRAIN_Z_MIN) / TERRAIN.depth) * Math.PI * 2;
   const rolling =
-    Math.sin(x * 0.34 + z * 0.08) * 0.19 +
-    Math.cos(z * 0.25 - x * 0.05) * 0.17 +
-    Math.sin((x + z) * 0.43) * 0.09;
+    Math.sin(u * 2 + v) * 0.19 +
+    Math.cos(v * 2 - u) * 0.17 +
+    Math.sin(u * 3 + v * 2) * 0.09;
 
   const formations =
     gaussian(x, z, -4.5, 0.3, 2.8, 0.82) +
@@ -107,10 +130,13 @@ const terrainHeight = (x: number, z: number) => {
     gaussian(x, z, -0.55, -6.85, 0.49, 0.31);
 
   const fine =
-    Math.sin(x * 1.37 + z * 0.71) * 0.028 +
-    Math.sin(x * 2.21 - z * 1.14) * 0.016;
+    Math.sin(u * 7 + v * 5) * 0.028 +
+    Math.sin(u * 11 - v * 8) * 0.016;
 
-  const spawnDistance = Math.hypot(x - START.x, z - START.z);
+  const spawnDistance = Math.hypot(
+    periodicDelta(x, START.x, TERRAIN.width),
+    periodicDelta(z, START.z, TERRAIN.depth),
+  );
   const terrainBlend = THREE.MathUtils.smoothstep(spawnDistance, 1.35, 3.4);
   return (rolling + formations + singleWheelBumps + fine) * terrainBlend;
 };
@@ -413,6 +439,9 @@ async function start() {
     activeBlockId: "" as string,
     startX: START.x,
     startZ: START.z,
+    previousX: START.x,
+    previousZ: START.z,
+    distanceTraveled: 0,
     startForward: new THREE.Vector3(0, 0, -1),
     targetForward: new THREE.Vector3(0, 0, -1),
   };
@@ -536,11 +565,10 @@ async function start() {
   const buildMissionMapBackground = () => {
     const context = missionMapBackground.getContext("2d")!;
     const image = context.createImageData(missionMapBackground.width, missionMapBackground.height);
-    const zMin = TERRAIN.centerZ - TERRAIN.depth / 2;
     for (let py = 0; py < missionMapBackground.height; py += 1) {
       for (let px = 0; px < missionMapBackground.width; px += 1) {
-        const x = -TERRAIN.width / 2 + (px / (missionMapBackground.width - 1)) * TERRAIN.width;
-        const z = zMin + (py / (missionMapBackground.height - 1)) * TERRAIN.depth;
+        const x = TERRAIN_X_MIN + (px / (missionMapBackground.width - 1)) * TERRAIN.width;
+        const z = TERRAIN_Z_MIN + (py / (missionMapBackground.height - 1)) * TERRAIN.depth;
         const height = terrainHeight(x, z);
         const shade = THREE.MathUtils.clamp(0.42 + height * 0.25, 0.18, 0.84);
         const offset = (py * missionMapBackground.width + px) * 4;
@@ -554,17 +582,39 @@ async function start() {
   };
 
   const worldToMap = (x: number, z: number) => ({
-    x: ((x + TERRAIN.width / 2) / TERRAIN.width) * ui.missionMap.width,
-    y: ((z - (TERRAIN.centerZ - TERRAIN.depth / 2)) / TERRAIN.depth) * ui.missionMap.height,
+    x: ((x - TERRAIN_X_MIN) / TERRAIN.width) * ui.missionMap.width,
+    y: ((z - TERRAIN_Z_MIN) / TERRAIN.depth) * ui.missionMap.height,
   });
+
+  const drawWrappedMapSegment = (
+    context: CanvasRenderingContext2D,
+    from: { x: number; z: number },
+    to: { x: number; z: number },
+  ) => {
+    const start = worldToMap(from.x, from.z);
+    const dxPixels = periodicDelta(to.x, from.x, TERRAIN.width) / TERRAIN.width * ui.missionMap.width;
+    const dzPixels = periodicDelta(to.z, from.z, TERRAIN.depth) / TERRAIN.depth * ui.missionMap.height;
+
+    // Se dibuja el mismo tramo en las nueve copias del mapa. El canvas recorta
+    // automáticamente lo que queda fuera, mostrando la línea salir por un
+    // borde y continuar por el opuesto sin una diagonal artificial.
+    for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        const x = start.x + offsetX * ui.missionMap.width;
+        const y = start.y + offsetY * ui.missionMap.height;
+        context.moveTo(x, y);
+        context.lineTo(x + dxPixels, y + dzPixels);
+      }
+    }
+  };
 
   const mapEventToWorld = (event: MouseEvent) => {
     const rect = ui.missionMap.getBoundingClientRect();
     const u = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
     const v = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
     return {
-      x: -TERRAIN.width / 2 + u * TERRAIN.width,
-      z: TERRAIN.centerZ - TERRAIN.depth / 2 + v * TERRAIN.depth,
+      x: TERRAIN_X_MIN + u * TERRAIN.width,
+      z: TERRAIN_Z_MIN + v * TERRAIN.depth,
     };
   };
 
@@ -573,7 +623,10 @@ async function start() {
       ui.mapCoordinates.textContent = `ROVER · X ${point.x.toFixed(1)} m · Z ${point.z.toFixed(1)} m`;
       return;
     }
-    const distance = Math.hypot(point.x - latestRoverMapPosition.x, point.z - latestRoverMapPosition.z);
+    const distance = Math.hypot(
+      periodicDelta(point.x, latestRoverMapPosition.x, TERRAIN.width),
+      periodicDelta(point.z, latestRoverMapPosition.z, TERRAIN.depth),
+    );
     ui.mapCoordinates.textContent = `CURSOR · X ${point.x.toFixed(1)} m · Z ${point.z.toFixed(1)} m · AL ROVER ${distance.toFixed(1)} m`;
   };
 
@@ -585,10 +638,10 @@ async function start() {
     context.clearRect(0, 0, ui.missionMap.width, ui.missionMap.height);
     context.drawImage(missionMapBackground, 0, 0, ui.missionMap.width, ui.missionMap.height);
 
-    const xMin = -TERRAIN.width / 2;
-    const xMax = TERRAIN.width / 2;
-    const zMin = TERRAIN.centerZ - TERRAIN.depth / 2;
-    const zMax = TERRAIN.centerZ + TERRAIN.depth / 2;
+    const xMin = TERRAIN_X_MIN;
+    const xMax = TERRAIN_X_MAX;
+    const zMin = TERRAIN_Z_MIN;
+    const zMax = TERRAIN_Z_MAX;
     for (let meter = Math.ceil(xMin); meter <= Math.floor(xMax); meter += 1) {
       const x = worldToMap(meter, 0).x;
       const major = meter % 5 === 0;
@@ -649,18 +702,21 @@ async function start() {
       .map((block) => waypoints.find((point) => point.id === block.waypointId))
       .filter((point): point is Waypoint => Boolean(point));
     if (routePoints.length) {
-      const start = worldToMap(START.x, START.z);
       const segmentLabels: Array<{ x: number; y: number; distance: number }> = [];
       let previousWorld = { x: START.x, z: START.z };
       context.beginPath();
-      context.moveTo(start.x, start.y);
       routePoints.forEach((point) => {
-        const mapPoint = worldToMap(point.x, point.z);
-        context.lineTo(mapPoint.x, mapPoint.y);
+        const dx = periodicDelta(point.x, previousWorld.x, TERRAIN.width);
+        const dz = periodicDelta(point.z, previousWorld.z, TERRAIN.depth);
+        const midpoint = worldToMap(
+          wrapTerrainX(previousWorld.x + dx * 0.5),
+          wrapTerrainZ(previousWorld.z + dz * 0.5),
+        );
+        drawWrappedMapSegment(context, previousWorld, point);
         segmentLabels.push({
-          x: (worldToMap(previousWorld.x, previousWorld.z).x + mapPoint.x) * 0.5,
-          y: (worldToMap(previousWorld.x, previousWorld.z).y + mapPoint.y) * 0.5,
-          distance: Math.hypot(point.x - previousWorld.x, point.z - previousWorld.z),
+          x: midpoint.x,
+          y: midpoint.y,
+          distance: Math.hypot(dx, dz),
         });
         previousWorld = point;
       });
@@ -685,11 +741,9 @@ async function start() {
 
     if (roverTrail.length > 1) {
       context.beginPath();
-      roverTrail.forEach((point, index) => {
-        const mapPoint = worldToMap(point.x, point.z);
-        if (index === 0) context.moveTo(mapPoint.x, mapPoint.y);
-        else context.lineTo(mapPoint.x, mapPoint.y);
-      });
+      for (let index = 1; index < roverTrail.length; index += 1) {
+        drawWrappedMapSegment(context, roverTrail[index - 1], roverTrail[index]);
+      }
       context.strokeStyle = "rgba(101, 232, 166, .52)";
       context.lineWidth = 3;
       context.stroke();
@@ -840,6 +894,9 @@ async function start() {
       mission.activeBlockId = block.id;
       mission.startX = position.x;
       mission.startZ = position.z;
+      mission.previousX = position.x;
+      mission.previousZ = position.z;
+      mission.distanceTraveled = 0;
       mission.startForward.copy(forward);
       mission.targetForward.copy(forward);
       if (block.type === "turn") {
@@ -850,8 +907,12 @@ async function start() {
     }
 
     if (block.type === "drive") {
-      const traveled = Math.hypot(position.x - mission.startX, position.z - mission.startZ);
-      const remaining = Math.max(0, block.distance - traveled);
+      const stepX = periodicDelta(position.x, mission.previousX, TERRAIN.width);
+      const stepZ = periodicDelta(position.z, mission.previousZ, TERRAIN.depth);
+      mission.distanceTraveled += Math.hypot(stepX, stepZ);
+      mission.previousX = position.x;
+      mission.previousZ = position.z;
+      const remaining = Math.max(0, block.distance - mission.distanceTraveled);
       const speed = Math.abs(vehicle.currentVehicleSpeed());
       if (remaining <= 0.10 && speed <= 0.14) {
         completeMissionBlock();
@@ -883,7 +944,11 @@ async function start() {
       completeMissionBlock();
       return getMissionCommand();
     }
-    const toTarget = new THREE.Vector3(waypoint.x - position.x, 0, waypoint.z - position.z);
+    const toTarget = new THREE.Vector3(
+      periodicDelta(waypoint.x, position.x, TERRAIN.width),
+      0,
+      periodicDelta(waypoint.z, position.z, TERRAIN.depth),
+    );
     const distance = toTarget.length();
     const speed = Math.abs(vehicle.currentVehicleSpeed());
     // Los waypoints son puntos de paso, no paradas. Al entrar en su radio se
@@ -1063,7 +1128,10 @@ async function start() {
     let nearestIndex = -1;
     let nearestDistance = 1.15;
     waypoints.forEach((point, index) => {
-      const distance = Math.hypot(point.x - x, point.z - z);
+      const distance = Math.hypot(
+        periodicDelta(point.x, x, TERRAIN.width),
+        periodicDelta(point.z, z, TERRAIN.depth),
+      );
       if (distance < nearestDistance) {
         nearestIndex = index;
         nearestDistance = distance;
@@ -1112,6 +1180,18 @@ async function start() {
   const moveTowards = (current: number, target: number, maxDelta: number) => {
     if (current < target) return Math.min(current + maxDelta, target);
     return Math.max(current - maxDelta, target);
+  };
+
+  const wrapRoverAcrossTerrain = () => {
+    const position = chassisBody.translation();
+    const wrappedX = wrapTerrainX(position.x);
+    const wrappedZ = wrapTerrainZ(position.z);
+    if (Math.abs(wrappedX - position.x) < 1e-6 && Math.abs(wrappedZ - position.z) < 1e-6) return;
+
+    // setTranslation no altera velocidad lineal, velocidad angular ni giro.
+    // Los colliders vecinos mantienen apoyadas las ruedas durante el cruce y
+    // en el siguiente subpaso el raycast continúa sobre la copia opuesta.
+    chassisBody.setTranslation({ x: wrappedX, y: position.y, z: wrappedZ }, true);
   };
 
   const updateVehicle = (dt: number) => {
@@ -1211,6 +1291,7 @@ async function start() {
     }
     vehicle.updateVehicle(dt);
     world.step();
+    wrapRoverAcrossTerrain();
   };
 
   const setKinematicVisualPose = (x: number, z: number, roll: number, height: number) => {
@@ -1350,7 +1431,13 @@ async function start() {
     ui.barRight.style.width = `${THREE.MathUtils.clamp(rightCompression / 1.4, 4, 100)}%`;
 
     const lastTrailPoint = roverTrail.at(-1);
-    if (!lastTrailPoint || Math.hypot(position.x - lastTrailPoint.x, position.z - lastTrailPoint.z) > 0.18) {
+    const trailDistance = lastTrailPoint
+      ? Math.hypot(
+          periodicDelta(position.x, lastTrailPoint.x, TERRAIN.width),
+          periodicDelta(position.z, lastTrailPoint.z, TERRAIN.depth),
+        )
+      : Number.POSITIVE_INFINITY;
+    if (trailDistance > 0.18) {
       roverTrail.push({ x: position.x, z: position.z });
       if (roverTrail.length > 480) roverTrail.shift();
     }
@@ -1560,18 +1647,19 @@ function createMarsSurfaceTextures(renderer: THREE.WebGLRenderer) {
 
   const dark = { r: 102, g: 39, b: 22 };
   const light = { r: 205, g: 105, b: 55 };
+  const textureTau = Math.PI * 2;
   let offset = 0;
   for (let y = 0; y < textureHeight; y += 1) {
     const v = y / (textureHeight - 1);
     for (let x = 0; x < textureWidth; x += 1) {
       const u = x / (textureWidth - 1);
       const broad =
-        Math.sin(u * 13.1 + v * 4.7) * 0.10 +
-        Math.cos(v * 19.3 - u * 3.8) * 0.08 +
-        Math.sin((u + v) * 41.0) * 0.035;
+        Math.sin((u * 2 + v) * textureTau) * 0.10 +
+        Math.cos((v * 3 - u) * textureTau) * 0.08 +
+        Math.sin((u * 5 + v * 4) * textureTau) * 0.035;
       const fine =
-        Math.sin(u * 173.0 + v * 29.0) * 0.020 +
-        Math.cos(v * 211.0 - u * 47.0) * 0.016;
+        Math.sin((u * 29 + v * 7) * textureTau) * 0.020 +
+        Math.cos((v * 31 - u * 11) * textureTau) * 0.016;
       const grain = (random() + random() + random() - 1.5) / 1.5;
       const tone = THREE.MathUtils.clamp(0.52 + broad + fine + grain * 0.065, 0.08, 0.96);
 
@@ -1666,6 +1754,8 @@ function createMarsSurfaceTextures(renderer: THREE.WebGLRenderer) {
   const albedo = new THREE.CanvasTexture(albedoCanvas);
   const bump = new THREE.CanvasTexture(bumpCanvas);
   albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
+  bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
   albedo.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   bump.anisotropy = albedo.anisotropy;
   albedo.minFilter = THREE.LinearMipmapLinearFilter;
@@ -1680,6 +1770,7 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World, renderer: TH
   const rowSize = xSegments + 1;
   const vertexCount = rowSize * (zSegments + 1);
   const vertices = new Float32Array(vertexCount * 3);
+  const normals = new Float32Array(vertexCount * 3);
   const colors = new Float32Array(vertexCount * 3);
   const uvs = new Float32Array(vertexCount * 2);
   const indices = new Uint32Array(xSegments * zSegments * 6);
@@ -1689,6 +1780,8 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World, renderer: TH
   const darkSand = new THREE.Color(0xc08a74);
   const lightSand = new THREE.Color(0xffd1ad);
   const vertexColor = new THREE.Color();
+  const vertexNormal = new THREE.Vector3();
+  const normalEpsilon = 0.035;
 
   for (let zIndex = 0; zIndex <= zSegments; zIndex += 1) {
     const z = centerZ - depth / 2 + (zIndex / zSegments) * depth;
@@ -1699,7 +1792,24 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World, renderer: TH
       vertices[vertexOffset + 1] = y;
       vertices[vertexOffset + 2] = z;
 
-      const shade = THREE.MathUtils.clamp(0.43 + y * 0.26 + Math.sin(x * 0.7 + z * 0.4) * 0.055, 0, 1);
+      // Normal calculada con muestras periódicas. Los vértices de ambos bordes
+      // reciben la misma pendiente y no aparece una costura de iluminación.
+      vertexNormal.set(
+        terrainHeight(x - normalEpsilon, z) - terrainHeight(x + normalEpsilon, z),
+        normalEpsilon * 2,
+        terrainHeight(x, z - normalEpsilon) - terrainHeight(x, z + normalEpsilon),
+      ).normalize();
+      normals[vertexOffset] = vertexNormal.x;
+      normals[vertexOffset + 1] = vertexNormal.y;
+      normals[vertexOffset + 2] = vertexNormal.z;
+
+      const uAngle = (xIndex / xSegments) * Math.PI * 2;
+      const vAngle = (zIndex / zSegments) * Math.PI * 2;
+      const shade = THREE.MathUtils.clamp(
+        0.43 + y * 0.26 + Math.sin(uAngle * 3 + vAngle * 2) * 0.055,
+        0,
+        1,
+      );
       vertexColor.lerpColors(darkSand, lightSand, shade);
       colors[vertexOffset] = vertexColor.r;
       colors[vertexOffset + 1] = vertexColor.g;
@@ -1732,35 +1842,53 @@ function createMarsTerrain(scene: THREE.Scene, world: RAPIER.World, renderer: TH
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-  geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 
   const surfaceTextures = createMarsSurfaceTextures(renderer);
-  const terrain = new THREE.Mesh(
-    geometry,
-    new THREE.MeshStandardMaterial({
-      map: surfaceTextures.albedo,
-      bumpMap: surfaceTextures.bump,
-      bumpScale: 0.045,
-      vertexColors: true,
-      roughness: 0.96,
-      metalness: 0,
-    }),
-  );
-  terrain.receiveShadow = true;
-  scene.add(terrain);
+  const terrainMaterial = new THREE.MeshStandardMaterial({
+    map: surfaceTextures.albedo,
+    bumpMap: surfaceTextures.bump,
+    bumpScale: 0.045,
+    vertexColors: true,
+    roughness: 0.96,
+    metalness: 0,
+  });
 
-  // El collider usa exactamente los mismos triángulos de la malla visible.
+  // Una sola malla instanciada dibuja copias alrededor del mapa. Al cruzar un
+  // borde, la cámara encuentra delante la misma superficie del lado opuesto.
+  const visualTileCount = (VISUAL_TILE_RADIUS * 2 + 1) ** 2;
+  const terrainTiles = new THREE.InstancedMesh(geometry, terrainMaterial, visualTileCount);
+  const tileMatrix = new THREE.Matrix4();
+  let tileIndex = 0;
+  for (let tileZ = -VISUAL_TILE_RADIUS; tileZ <= VISUAL_TILE_RADIUS; tileZ += 1) {
+    for (let tileX = -VISUAL_TILE_RADIUS; tileX <= VISUAL_TILE_RADIUS; tileX += 1) {
+      tileMatrix.makeTranslation(tileX * width, 0, tileZ * depth);
+      terrainTiles.setMatrixAt(tileIndex, tileMatrix);
+      tileIndex += 1;
+    }
+  }
+  terrainTiles.instanceMatrix.needsUpdate = true;
+  terrainTiles.receiveShadow = true;
+  terrainTiles.frustumCulled = false;
+  scene.add(terrainTiles);
+
+  // Los colliders de las ocho copias vecinas sostienen las ruedas mientras el
+  // centro del rover atraviesa la costura. Después el chasis reaparece en la
+  // baldosa central conservando todas sus velocidades.
   const terrainBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  world.createCollider(
-    RAPIER.ColliderDesc.trimesh(vertices, indices)
-      .setFriction(1.22)
-      .setRestitution(0),
-    terrainBody,
-  );
+  for (let tileZ = -PHYSICS_TILE_RADIUS; tileZ <= PHYSICS_TILE_RADIUS; tileZ += 1) {
+    for (let tileX = -PHYSICS_TILE_RADIUS; tileX <= PHYSICS_TILE_RADIUS; tileX += 1) {
+      const collider = RAPIER.ColliderDesc.trimesh(vertices, indices);
+      collider.setTranslation(tileX * width, 0, tileZ * depth);
+      collider.setFriction(1.22);
+      collider.setRestitution(0);
+      world.createCollider(collider, terrainBody);
+    }
+  }
 }
 
 start().catch((error: unknown) => {

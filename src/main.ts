@@ -82,33 +82,6 @@ const ROVER_COMPONENT_MATCHERS: Array<[RoverComponentName, RegExp]> = [
   ["chassis", /CHASIS/],
 ];
 
-// [X, Z, radio, altura]. Son montículos pequeños y suaves repartidos por
-// todo el mapa. Como gaussian() usa distancia periódica, también continúan
-// correctamente cuando uno queda cerca de un borde del mundo envolvente.
-const SCATTERED_SMALL_MOUNDS: ReadonlyArray<readonly [number, number, number, number]> = [
-  [-11.6, 14.2, 0.72, 0.18],
-  [-7.8, 11.8, 0.56, 0.14],
-  [-2.9, 15.0, 0.46, 0.12],
-  [4.7, 12.7, 0.66, 0.17],
-  [10.8, 15.3, 0.53, 0.15],
-  [12.1, 8.2, 0.74, 0.20],
-  [7.5, 6.1, 0.48, 0.13],
-  [-9.9, 6.3, 0.63, 0.17],
-  [-12.1, 1.0, 0.51, 0.14],
-  [9.8, 0.1, 0.68, 0.19],
-  [-8.5, -4.7, 0.56, 0.15],
-  [11.8, -5.8, 0.47, 0.12],
-  [-11.2, -10.1, 0.71, 0.20],
-  [8.9, -11.8, 0.61, 0.17],
-  [-8.1, -16.3, 0.50, 0.14],
-  [2.8, -18.5, 0.70, 0.19],
-  [10.8, -20.3, 0.55, 0.16],
-  [-12.2, -23.3, 0.65, 0.18],
-  [-4.1, -24.9, 0.46, 0.12],
-  [5.9, -25.0, 0.59, 0.16],
-  [13.1, -24.0, 0.43, 0.11],
-];
-
 const positiveModulo = (value: number, period: number) => ((value % period) + period) % period;
 
 const wrapCoordinate = (value: number, minimum: number, period: number) =>
@@ -147,19 +120,41 @@ const terrainHeight = (x: number, z: number) => {
     gaussian(x, z, 3.1, -7.0, 2.0, 0.48) -
     gaussian(x, z, -5.0, -13.0, 2.5, 0.55);
 
-  // Montículos estrechos, alternados sobre cada huella. Cada lateral del rig
-  // visual resuelve después su propio ángulo de balancín.
+  // Montículos estrechos del tamaño aproximado de una rueda, distribuidos por
+  // todo el mapa. Cada uno puede levantar un solo lateral de la suspensión.
   const singleWheelBumps =
+    // Zona norte.
+    gaussian(x, z, -11.3, 14.1, 0.52, 0.29) +
+    gaussian(x, z, -6.9, 12.3, 0.48, 0.27) +
+    gaussian(x, z, -1.8, 14.8, 0.54, 0.31) +
+    gaussian(x, z, 4.4, 12.5, 0.50, 0.28) +
+    gaussian(x, z, 10.7, 14.7, 0.56, 0.32) +
+    gaussian(x, z, -9.8, 6.5, 0.55, 0.31) +
+    gaussian(x, z, 7.2, 6.1, 0.47, 0.26) +
+    gaussian(x, z, 12.1, 8.0, 0.49, 0.30) +
+
+    // Zona central y recorrido inicial.
     gaussian(x, z, -0.55, 1.15, 0.52, 0.29) +
     gaussian(x, z, 0.55, -0.75, 0.50, 0.32) +
     gaussian(x, z, -0.55, -2.75, 0.51, 0.30) +
     gaussian(x, z, 0.55, -4.80, 0.52, 0.33) +
-    gaussian(x, z, -0.55, -6.85, 0.49, 0.31);
+    gaussian(x, z, -0.55, -6.85, 0.49, 0.31) +
+    gaussian(x, z, -12.2, 0.8, 0.46, 0.27) +
+    gaussian(x, z, 9.6, 0.2, 0.53, 0.33) +
+    gaussian(x, z, -8.6, -4.5, 0.50, 0.29) +
+    gaussian(x, z, 11.6, -5.9, 0.48, 0.26) +
+    gaussian(x, z, 5.5, -8.2, 0.45, 0.25) +
+    gaussian(x, z, -2.0, -12.9, 0.50, 0.28) +
 
-  let scatteredSmallBumps = 0;
-  for (const [cx, cz, radius, height] of SCATTERED_SMALL_MOUNDS) {
-    scatteredSmallBumps += gaussian(x, z, cx, cz, radius, height);
-  }
+    // Zona sur.
+    gaussian(x, z, -11.2, -10.1, 0.56, 0.34) +
+    gaussian(x, z, 8.9, -11.6, 0.51, 0.30) +
+    gaussian(x, z, -7.9, -16.0, 0.47, 0.27) +
+    gaussian(x, z, 2.7, -18.5, 0.57, 0.32) +
+    gaussian(x, z, 10.7, -20.1, 0.50, 0.29) +
+    gaussian(x, z, -12.0, -23.2, 0.54, 0.31) +
+    gaussian(x, z, -4.0, -24.7, 0.46, 0.25) +
+    gaussian(x, z, 5.8, -25.0, 0.52, 0.30);
 
   const fine =
     Math.sin(u * 7 + v * 5) * 0.028 +
@@ -170,7 +165,7 @@ const terrainHeight = (x: number, z: number) => {
     periodicDelta(z, START.z, TERRAIN.depth),
   );
   const terrainBlend = THREE.MathUtils.smoothstep(spawnDistance, 1.35, 3.4);
-  return (rolling + formations + singleWheelBumps + scatteredSmallBumps + fine) * terrainBlend;
+  return (rolling + formations + singleWheelBumps + fine) * terrainBlend;
 };
 
 type ControlBinding = {

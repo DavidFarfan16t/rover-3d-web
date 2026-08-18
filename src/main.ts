@@ -44,6 +44,7 @@ const ANTI_WHEELIE_MIN_TORQUE_SCALE = 0.18;
 const CONTACT_RECOVERY_FORCE_PER_WHEEL = 36;
 const AUTOPILOT_BRAKE = 0.9;
 const MANUAL_BRAKE = 0.65;
+const WAYPOINT_PASS_RADIUS = 0.58;
 
 // Apariencia del cielo marciano. Puedes cambiar estos colores CSS si quieres
 // una atmósfera más clara, rojiza u oscura.
@@ -60,7 +61,7 @@ type RoverComponentName = "chassis" | "suspension" | "steering" | "motors" | "wh
 // chassis: "#e86f2d"  |  wheels: "#171717"
 // Con null se conserva el color/material original exportado desde Blender.
 const ROVER_COMPONENT_COLORS: Record<RoverComponentName, string | null> = {
-  chassis: "#080808",
+  chassis: "#7a7f85",
   suspension: null,
   steering: "#d21f26",
   motors: null,
@@ -168,7 +169,7 @@ const ui = {
 
 async function start() {
   await RAPIER.init();
-  ui.loadingStatus.textContent = "Cargando rover optimizado V2…";
+  ui.loadingStatus.textContent = "Cargando rover optimizado V3…";
 
   const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
@@ -880,14 +881,17 @@ async function start() {
     const waypoint = waypoints.find((point) => point.id === block.waypointId);
     if (!waypoint) {
       completeMissionBlock();
-      return { throttle: 0, steer: 0, brake: 0 };
+      return getMissionCommand();
     }
     const toTarget = new THREE.Vector3(waypoint.x - position.x, 0, waypoint.z - position.z);
     const distance = toTarget.length();
     const speed = Math.abs(vehicle.currentVehicleSpeed());
-    if (distance < 0.34 && speed < 0.14) {
+    // Los waypoints son puntos de paso, no paradas. Al entrar en su radio se
+    // activa inmediatamente el siguiente bloque, conservando acelerador,
+    // dirección y velocidad durante la transición.
+    if (distance <= WAYPOINT_PASS_RADIUS) {
       completeMissionBlock();
-      return { throttle: 0, steer: 0, brake: 0 };
+      return getMissionCommand();
     }
     toTarget.normalize();
     const headingError = signedHeadingError(forward, toTarget);
@@ -900,31 +904,21 @@ async function start() {
       0.18,
       1.15,
     );
-    const distanceTargetSpeed = THREE.MathUtils.clamp(
-      Math.max(0, distance - 0.28) * 1.08,
-      0,
-      1.55,
-    );
     const curveSpeedLimit = THREE.MathUtils.lerp(1.55, 0.85, curveAmount);
-    const targetSpeed = Math.min(distanceTargetSpeed, curveSpeedLimit);
+    // La velocidad ya no disminuye por acercarse al waypoint; únicamente se
+    // modera en función del giro necesario para mantener estabilidad.
+    const targetSpeed = curveSpeedLimit;
     const approach = THREE.MathUtils.clamp(
       (targetSpeed - speed) * 1.65,
       0,
       AUTOPILOT_MAX_THROTTLE,
     );
     const minimumCurveThrottle =
-      distance > 0.65 && speed < Math.max(0.35, targetSpeed * 0.92)
+      speed < Math.max(0.35, targetSpeed * 0.92)
         ? THREE.MathUtils.lerp(0.28, 0.48, curveAmount)
         : 0;
     const throttle = Math.max(approach, minimumCurveThrottle);
-
-    // No frena mientras está corrigiendo una curva. El freno se habilita
-    // únicamente cerca del waypoint y cuando el rover ya está orientado.
-    const canBrake = distance < 1.05 && Math.abs(headingError) < 0.50;
-    const brake = canBrake
-      ? THREE.MathUtils.clamp((speed - targetSpeed - 0.08) * 1.4, 0, 1)
-      : 0;
-    return { throttle, steer, brake };
+    return { throttle, steer, brake: 0 };
   };
 
   const setPressed = (code: string, value: boolean) => {

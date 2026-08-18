@@ -45,6 +45,36 @@ const CONTACT_RECOVERY_FORCE_PER_WHEEL = 36;
 const AUTOPILOT_BRAKE = 0.9;
 const MANUAL_BRAKE = 0.65;
 
+// Apariencia del cielo marciano. Puedes cambiar estos colores CSS si quieres
+// una atmósfera más clara, rojiza u oscura.
+const MARS_SKY_COLORS = {
+  zenith: "#754052",
+  horizon: "#e49a6d",
+  ground: "#74311f",
+  sun: "#ffd2a6",
+};
+
+type RoverComponentName = "chassis" | "suspension" | "steering" | "motors" | "wheels";
+
+// Coloca un color CSS en el componente que quieras modificar. Ejemplos:
+// chassis: "#e86f2d"  |  wheels: "#171717"
+// Con null se conserva el color/material original exportado desde Blender.
+const ROVER_COMPONENT_COLORS: Record<RoverComponentName, string | null> = {
+  chassis: null,
+  suspension: null,
+  steering: null,
+  motors: null,
+  wheels: null,
+};
+
+const ROVER_COMPONENT_MATCHERS: Array<[RoverComponentName, RegExp]> = [
+  ["wheels", /WHEEL_(FL|FR|RL|RR)|RUEDA 2/],
+  ["motors", /3D-AK80|MOTOR AK/],
+  ["steering", /STEER_/],
+  ["suspension", /SUSP_|ARTICULACION|DIFERENCIAAL|LINK_|FIXED_/],
+  ["chassis", /CHASIS/],
+];
+
 const gaussian = (x: number, z: number, cx: number, cz: number, radius: number, height: number) => {
   const dx = x - cx;
   const dz = z - cz;
@@ -151,8 +181,10 @@ async function start() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x160906);
-  scene.fog = new THREE.Fog(0x2b120b, 20, 48);
+  scene.background = new THREE.Color(MARS_SKY_COLORS.horizon);
+  scene.fog = new THREE.Fog(new THREE.Color(MARS_SKY_COLORS.horizon), 14, 55);
+  const marsSky = createMarsSky(scene);
+  createMarsHorizonGround(scene);
 
   const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.03, 100);
   camera.position.set(3.2, 2.15, 6.2);
@@ -244,6 +276,7 @@ async function start() {
     -bounds.min.y - (SUSPENSION_REST + WHEEL_RADIUS),
     -center.z,
   );
+  applyRoverComponentColors(model);
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {
       object.castShadow = true;
@@ -1380,6 +1413,7 @@ async function start() {
     // excedente para que Rapier no intente recuperar todo en un solo frame.
     if (substeps === MAX_SUBSTEPS) accumulator = 0;
     updateVisuals(delta);
+    marsSky.position.copy(camera.position);
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
   };
@@ -1390,6 +1424,119 @@ async function start() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  });
+}
+
+function createMarsSky(scene: THREE.Scene) {
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      zenithColor: { value: new THREE.Color(MARS_SKY_COLORS.zenith) },
+      horizonColor: { value: new THREE.Color(MARS_SKY_COLORS.horizon) },
+      groundColor: { value: new THREE.Color(MARS_SKY_COLORS.ground) },
+      sunColor: { value: new THREE.Color(MARS_SKY_COLORS.sun) },
+    },
+    vertexShader: `
+      varying vec3 vDirection;
+
+      void main() {
+        vDirection = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 zenithColor;
+      uniform vec3 horizonColor;
+      uniform vec3 groundColor;
+      uniform vec3 sunColor;
+      varying vec3 vDirection;
+
+      void main() {
+        vec3 direction = normalize(vDirection);
+        float height = direction.y;
+
+        vec3 lowerSky = mix(
+          groundColor,
+          horizonColor,
+          smoothstep(-0.58, 0.02, height)
+        );
+        vec3 upperSky = mix(
+          horizonColor,
+          zenithColor,
+          smoothstep(-0.02, 0.92, height)
+        );
+        vec3 skyColor = mix(lowerSky, upperSky, step(0.0, height));
+
+        // Bruma de polvo en la línea del horizonte.
+        float horizonHaze = pow(max(0.0, 1.0 - abs(height)), 5.0);
+        skyColor = mix(skyColor, horizonColor, horizonHaze * 0.46);
+
+        // Resplandor solar suave, sin usar una imagen externa.
+        vec3 sunDirection = normalize(vec3(-0.48, 0.31, -0.82));
+        float sunGlow = pow(max(dot(direction, sunDirection), 0.0), 72.0);
+        float sunCore = pow(max(dot(direction, sunDirection), 0.0), 520.0);
+        skyColor += sunColor * (sunGlow * 0.24 + sunCore * 0.72);
+
+        gl_FragColor = vec4(skyColor, 1.0);
+      }
+    `,
+    side: THREE.BackSide,
+    depthWrite: false,
+    depthTest: false,
+    fog: false,
+  });
+
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(82, 48, 28), material);
+  sky.renderOrder = -1000;
+  sky.frustumCulled = false;
+  scene.add(sky);
+  return sky;
+}
+
+function createMarsHorizonGround(scene: THREE.Scene) {
+  // Plano puramente visual bajo el terreno físico. Evita que en los bordes
+  // aparezca el vacío y se pierde gradualmente dentro de la neblina marciana.
+  const horizonGround = new THREE.Mesh(
+    new THREE.PlaneGeometry(220, 220),
+    new THREE.MeshBasicMaterial({
+      color: MARS_SKY_COLORS.ground,
+      fog: true,
+    }),
+  );
+  horizonGround.rotation.x = -Math.PI / 2;
+  horizonGround.position.set(0, -1.15, TERRAIN.centerZ);
+  horizonGround.renderOrder = -10;
+  scene.add(horizonGround);
+}
+
+function applyRoverComponentColors(root: THREE.Object3D) {
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+
+    const hierarchyNames: string[] = [];
+    let current: THREE.Object3D | null = object;
+    while (current) {
+      hierarchyNames.push(current.name.toUpperCase());
+      if (current === root) break;
+      current = current.parent;
+    }
+
+    const hierarchyPath = hierarchyNames.join("/");
+    const component = ROVER_COMPONENT_MATCHERS.find(([, matcher]) => matcher.test(hierarchyPath))?.[0];
+    if (!component) return;
+
+    const color = ROVER_COMPONENT_COLORS[component];
+    if (color === null) return;
+
+    const recolorMaterial = (source: THREE.Material) => {
+      const material = source.clone() as THREE.Material & { color?: THREE.Color };
+      material.color?.set(color);
+      material.needsUpdate = true;
+      return material;
+    };
+
+    object.material = Array.isArray(object.material)
+      ? object.material.map(recolorMaterial)
+      : recolorMaterial(object.material);
   });
 }
 

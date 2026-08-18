@@ -2,6 +2,12 @@
 
 Laboratorio web 3D del rover de David Farfán. El proyecto usa **Three.js** para la visualización y **Rapier 3D** para la física del vehículo.
 
+## Sitio web
+
+La versión pública se despliega automáticamente con GitHub Pages:
+
+**https://davidfarfan16t.github.io/rover-3d-web/**
+
 ## Estado actual
 
 - Modelo GLB V2 con jerarquía de ruedas, dirección y suspensión.
@@ -99,6 +105,12 @@ npm run build
 ```
 
 La versión publicable se genera en `dist/`. Vercel detecta automáticamente el proyecto Vite.
+
+## Publicar con GitHub Pages
+
+El flujo `.github/workflows/deploy-pages.yml` compila y publica el sitio automáticamente después de cada cambio enviado a `main`. La ruta base de Vite se obtiene de GitHub Pages, por lo que el modelo GLB, JavaScript, CSS y WebAssembly funcionan correctamente dentro de `/rover-3d-web/`.
+
+Para la primera publicación, en el repositorio abre **Settings → Pages** y selecciona **GitHub Actions** en **Source**. Después, el flujo se ejecuta solo con cada actualización.
 
 ## Próximas etapas
 

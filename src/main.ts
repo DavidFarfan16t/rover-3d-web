@@ -157,8 +157,10 @@ async function start() {
   const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.03, 100);
   camera.position.set(3.2, 2.15, 6.2);
   const orbit = new OrbitControls(camera, renderer.domElement);
+  orbit.enabled = true;
   orbit.enableDamping = true;
   orbit.dampingFactor = 0.06;
+  orbit.enablePan = false;
   orbit.maxPolarAngle = Math.PI * 0.49;
   orbit.minDistance = 1.7;
   orbit.maxDistance = 12;
@@ -335,7 +337,8 @@ async function start() {
   const driveForward = new THREE.Vector3();
   const drivePitchAxis = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
-  const cameraDesired = new THREE.Vector3();
+  const cameraFollowTarget = orbit.target.clone();
+  const cameraTargetDelta = new THREE.Vector3();
   const bodyVisualQuaternion = new THREE.Quaternion();
   const visualYawQuaternion = new THREE.Quaternion();
   const visualRollQuaternion = new THREE.Quaternion();
@@ -903,7 +906,9 @@ async function start() {
 
   const toggleCamera = () => {
     followCamera = !followCamera;
-    orbit.enabled = !followCamera;
+    orbit.enabled = true;
+    orbit.enablePan = !followCamera;
+    if (followCamera) cameraFollowTarget.copy(orbit.target);
     ui.cameraButton.textContent = `CÁMARA: ${followCamera ? "SEGUIMIENTO" : "ÓRBITA LIBRE"}`;
   };
 
@@ -1330,16 +1335,19 @@ async function start() {
     }
 
     if (followCamera) {
-      orbit.enabled = false;
+      // El objetivo persigue suavemente al rover. La cámara recibe exactamente
+      // el mismo desplazamiento, por lo que conserva el ángulo y el zoom que
+      // el usuario haya elegido con OrbitControls.
       cameraTarget.set(position.x, position.y + 0.32, position.z);
-      cameraDesired.set(2.5, 1.7, 4.0).applyQuaternion(roverVisual.quaternion).add(cameraTarget);
-      const amount = 1 - Math.exp(-dt * 3.2);
-      camera.position.lerp(cameraDesired, amount);
-      camera.lookAt(cameraTarget);
+      cameraFollowTarget.lerp(cameraTarget, 1 - Math.exp(-dt * 6));
+      cameraTargetDelta.subVectors(cameraFollowTarget, orbit.target);
+      camera.position.add(cameraTargetDelta);
+      orbit.target.copy(cameraFollowTarget);
+      orbit.enablePan = false;
     } else {
-      orbit.target.lerp(new THREE.Vector3(position.x, position.y + 0.25, position.z), 1 - Math.exp(-dt * 5));
-      orbit.update();
+      orbit.enablePan = true;
     }
+    orbit.update();
   };
 
   resetRover();

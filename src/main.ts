@@ -60,11 +60,11 @@ type RoverComponentName = "chassis" | "suspension" | "steering" | "motors" | "wh
 // chassis: "#e86f2d"  |  wheels: "#171717"
 // Con null se conserva el color/material original exportado desde Blender.
 const ROVER_COMPONENT_COLORS: Record<RoverComponentName, string | null> = {
-  chassis: null,
+  chassis: "#080808",
   suspension: null,
   steering: "#d21f26",
   motors: null,
-  wheels: null,
+  wheels: "#050505",
 };
 
 const ROVER_COMPONENT_MATCHERS: Array<[RoverComponentName, RegExp]> = [
@@ -172,7 +172,7 @@ async function start() {
 
   const canvas = document.querySelector<HTMLCanvasElement>("#scene")!;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -190,8 +190,9 @@ async function start() {
   camera.position.set(3.2, 2.15, 6.2);
   const orbit = new OrbitControls(camera, renderer.domElement);
   orbit.enabled = true;
-  orbit.enableDamping = true;
-  orbit.dampingFactor = 0.06;
+  // Sin inercia temporal: al dejar de arrastrar, la cámara se detiene en el
+  // mismo cuadro y el rover conserva contornos nítidos durante la marcha.
+  orbit.enableDamping = false;
   orbit.enablePan = false;
   orbit.maxPolarAngle = Math.PI * 0.49;
   orbit.minDistance = 1.7;
@@ -370,7 +371,6 @@ async function start() {
   const driveForward = new THREE.Vector3();
   const drivePitchAxis = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
-  const cameraFollowTarget = orbit.target.clone();
   const cameraTargetDelta = new THREE.Vector3();
   const bodyVisualQuaternion = new THREE.Quaternion();
   const visualYawQuaternion = new THREE.Quaternion();
@@ -941,7 +941,6 @@ async function start() {
     followCamera = !followCamera;
     orbit.enabled = true;
     orbit.enablePan = !followCamera;
-    if (followCamera) cameraFollowTarget.copy(orbit.target);
     ui.cameraButton.textContent = `CÁMARA: ${followCamera ? "SEGUIMIENTO" : "ÓRBITA LIBRE"}`;
   };
 
@@ -1368,14 +1367,17 @@ async function start() {
     }
 
     if (followCamera) {
-      // El objetivo persigue suavemente al rover. La cámara recibe exactamente
-      // el mismo desplazamiento, por lo que conserva el ángulo y el zoom que
-      // el usuario haya elegido con OrbitControls.
-      cameraTarget.set(position.x, position.y + 0.32, position.z);
-      cameraFollowTarget.lerp(cameraTarget, 1 - Math.exp(-dt * 6));
-      cameraTargetDelta.subVectors(cameraFollowTarget, orbit.target);
+      // Seguimiento rígido: cámara y objetivo reciben exactamente el mismo
+      // desplazamiento que el modelo visual en cada cuadro. No existe retraso
+      // de interpolación que haga deslizar o emborronar el rover en pantalla.
+      cameraTarget.set(
+        roverVisual.position.x,
+        roverVisual.position.y + 0.55,
+        roverVisual.position.z,
+      );
+      cameraTargetDelta.subVectors(cameraTarget, orbit.target);
       camera.position.add(cameraTargetDelta);
-      orbit.target.copy(cameraFollowTarget);
+      orbit.target.copy(cameraTarget);
       orbit.enablePan = false;
     } else {
       orbit.enablePan = true;
@@ -1423,7 +1425,7 @@ async function start() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   });
 }
 

@@ -62,7 +62,7 @@ type RoverComponentName = "chassis" | "suspension" | "steering" | "motors" | "wh
 const ROVER_COMPONENT_COLORS: Record<RoverComponentName, string | null> = {
   chassis: null,
   suspension: null,
-  steering: null,
+  steering: #d21f26,
   motors: null,
   wheels: null,
 };

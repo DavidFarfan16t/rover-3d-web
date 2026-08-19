@@ -138,7 +138,7 @@ async function start() {
     chassisBody,
   );
 
-  const vehicle = world.createVehicleController(chassisBody);
+  const vehicle = world.createVehicleController(chassisBody);//
   vehicle.indexUpAxis = 1;
   vehicle.setIndexForwardAxis = 2;
 

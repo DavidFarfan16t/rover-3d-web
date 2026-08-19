@@ -10,7 +10,7 @@ La versión pública se despliega automáticamente con GitHub Pages:
 
 ## Estado actual
 
-- Modelo GLB V2 con jerarquía de ruedas, dirección y suspensión.
+- Modelo GLB V3 optimizado con jerarquía de ruedas, dirección y suspensión.
 - Control vehicular físico mediante ray casting de Rapier.
 - Tracción, frenado y dirección en las cuatro ruedas.
 - Terreno marciano continuo con lomas, depresiones y rugosidad para observar la suspensión.
@@ -19,7 +19,7 @@ La versión pública se despliega automáticamente con GitHub Pages:
 - Suspensión raycast de recorrido ampliado y mayor amortiguación para conservar los cuatro contactos.
 - Cinemática visual independiente para los laterales izquierdo y derecho: cada balancín rota completo desde su pivote y conserva unidas las ruedas, soportes y articulaciones.
 - Ajuste visual de altura e inclinación del rover completo para mantener las cuatro llantas sobre el terreno sin trasladar piezas individuales.
-- El diferencial permanece fijo y no interviene en el movimiento de los dos balancines.
+- El diferencial acompaña visualmente la diferencia entre los balancines, pero no determina sus ángulos ni interviene en la física.
 - Una misma malla triangular se utiliza para la representación visual y las colisiones.
 - Telemetría de velocidad, contactos y compresión.
 - Cámara de seguimiento y cámara orbital.
@@ -35,7 +35,7 @@ La versión pública se despliega automáticamente con GitHub Pages:
 - Cualquier control de conducción despierta explícitamente el cuerpo físico.
 - La detección continua de colisiones (CCD) reduce penetraciones al atravesar obstáculos.
 - La dirección máxima disminuye con la velocidad para reducir vuelcos poco realistas.
-- La velocidad manual máxima es de **2,5 m/s** (aprox. **9,0 km/h**) y el piloto automático utiliza objetivos de hasta **1,65 m/s** (aprox. **5,9 km/h**).
+- La conducción manual normal está limitada a **2,5 m/s** (aprox. **9,0 km/h**), el modo Turbo alcanza **5,0 m/s** (**18 km/h**) y el piloto automático utiliza objetivos de hasta **1,65 m/s** (aprox. **5,9 km/h**).
 - La masa física se aproxima a 50 kg y el centro de masa está ligeramente rebajado para evitar caballitos.
 - El centro de masa se rebajó 4 cm adicionales y aumentó la amortiguación angular.
 - La fuerza de los motores entra mediante una rampa de unos **0,91 s**; responde con rapidez sin pasar instantáneamente de cero al máximo.
@@ -47,7 +47,7 @@ La versión pública se despliega automáticamente con GitHub Pages:
 - El piloto automático puede solicitar hasta el **88 %** del acelerador cuando una pendiente reduce su velocidad; no depende de mantener pulsada la tecla `W` para usar la asistencia de subida.
 - Después de detenerse en un waypoint, la reserva de tracción se activa con mayor rapidez y conserva suficiente acelerador para reiniciar la marcha en subida.
 - Un limitador suave reduce el empuje durante los últimos 0,32 m/s antes de la velocidad máxima, evitando los tirones de un corte instantáneo.
-- El piloto automático reduce su velocidad durante el último metro y aplica un freno progresivo antes de cada waypoint.
+- Los waypoints funcionan como puntos de paso: al entrar en un radio de 0,58 m se activa el siguiente bloque sin detener el rover. Los bloques **Avanzar** sí reducen la velocidad y frenan al completar su distancia.
 - En curvas conserva un acelerador mínimo y evita frenar hasta que el rover esté próximo y alineado con el waypoint, para impedir que se detenga durante la corrección de rumbo.
 - El reinicio limpia velocidad, giro, fuerzas, frenos y estado visual de la suspensión.
 
@@ -78,6 +78,8 @@ Vite mostrará una dirección local, normalmente `http://localhost:5173`.
 | `C` | Cambiar entre seguimiento y órbita |
 | `R` | Reiniciar el rover |
 
+El botón **Turbo 18 km/h** activa avance automático a la velocidad ampliada. Al pulsar `S`, cambiar de pestaña o perder el foco, el modo Turbo se desactiva.
+
 ## Planificador de misión
 
 El mapa usa el mismo sistema de unidades que la simulación:
@@ -96,7 +98,17 @@ El mapa usa el mismo sistema de unidades que la simulación:
 4. Pulsa **Play**. El rover vuelve al punto de inicio y ejecuta la secuencia completa.
 5. **Pausa** conserva el bloque actual; **Stop** detiene y vuelve el programa al primer bloque.
 
-Si se presiona `W`, `A`, `S` o `D` durante una misión, el piloto automático se pausa y entrega el control al usuario. El programa y los waypoints se conservan mediante `localStorage`.
+Si se presiona `W`, `A`, `S` o `D` durante una misión, el piloto automático se pausa y entrega el control al usuario. Activar Turbo también pausa la misión. El programa y los waypoints se conservan mediante `localStorage`.
+
+## Estructura del código
+
+- `src/main.ts`: orquesta la escena, Rapier, el movimiento, el piloto automático y el bucle de renderizado.
+- `src/config.ts`: reúne constantes físicas, límites y dimensiones compartidas.
+- `src/mars-environment.ts`: genera la altura, la malla, los colliders, las texturas y el cielo marciano.
+- `src/rover-model.ts`: enlaza y anima los controles mecánicos nombrados dentro del GLB.
+- `src/mission-types.ts`: define waypoints, bloques y comandos de conducción.
+- `src/ui.ts`: centraliza las referencias del DOM y crea el control Turbo.
+- `src/style.css`: contiene la presentación y los ajustes responsive.
 
 ## Compilar
 

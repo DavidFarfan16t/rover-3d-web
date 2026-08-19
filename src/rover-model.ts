@@ -3,7 +3,7 @@ import * as THREE from "three";
 type RoverComponentName = "chassis" | "suspension" | "steering" | "motors" | "wheels";
 
 const ROVER_COMPONENT_COLORS: Record<RoverComponentName, string | null> = {
-  chassis: "#7a7f85",
+  chassis: "#1d2530",
   suspension: null,
   steering: "#d21f26",
   motors: null,

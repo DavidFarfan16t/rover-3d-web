@@ -85,7 +85,7 @@ async function start() {
 
   const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.03, 100);
   camera.position.set(3.2, 2.15, 6.2);
-  const orbit = new OrbitControls(camera, renderer.domElement);
+  const orbit = new OrbitControls(camera, renderer.domElement); //
   orbit.enabled = true;
   // Sin inercia temporal: al dejar de arrastrar, la cámara se detiene en el
   // mismo cuadro y el rover conserva contornos nítidos durante la marcha.

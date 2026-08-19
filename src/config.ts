@@ -5,7 +5,7 @@ export const MAX_FRAME_DELTA = 0.08;
 export const MAX_SUBSTEPS = 10;
 export const WHEEL_RADIUS = 0.182;
 export const SUSPENSION_REST = 0.23;
-export const START = { x: 0, y: 0.62, z: 4.2 };
+export const START = { x: 0, y: 0.62, z: 0 };
 export const TERRAIN = { width: 28, depth: 44, centerZ: -5 };
 export const TERRAIN_X_MIN = -TERRAIN.width / 2;
 export const TERRAIN_X_MAX = TERRAIN.width / 2;
@@ -57,3 +57,104 @@ export const MARS_SKY_COLORS = {
   ground: "#74311f",
   sun: "#ffd2a6",
 };
+
+// Migra únicamente la misión inicial antigua a una distribución aleatoria
+// más amplia. Las misiones que el usuario ya haya personalizado se conservan.
+const MISSION_STORAGE_KEY = "rover-mission-v1";
+const OLD_DEFAULT_WAYPOINTS = [
+  { id: "wp-1", x: -0.55, z: 1.15 },
+  { id: "wp-2", x: 0.55, z: -0.75 },
+  { id: "wp-3", x: -0.55, z: -2.75 },
+] as const;
+
+const randomBetween = (min: number, max: number) => min + Math.random() * (max - min);
+const distance2D = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
+
+const makeRandomDefaultWaypoints = () => {
+  const margin = 3;
+  const minStartDistance = 7;
+  const minWaypointDistance = 7;
+  const minX = TERRAIN_X_MIN + margin;
+  const maxX = TERRAIN_X_MAX - margin;
+  const minZ = TERRAIN_Z_MIN + margin;
+  const maxZ = TERRAIN_Z_MAX - margin;
+  const points: Array<{ id: string; label: string; x: number; z: number }> = [];
+
+  for (let index = 0; index < 3; index += 1) {
+    let selected: { x: number; z: number } | null = null;
+
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const candidate = {
+        x: randomBetween(minX, maxX),
+        z: randomBetween(minZ, maxZ),
+      };
+
+      const farFromStart = distance2D(candidate.x, candidate.z, START.x, START.z) >= minStartDistance;
+      const farFromOthers = points.every(
+        (point) => distance2D(candidate.x, candidate.z, point.x, point.z) >= minWaypointDistance,
+      );
+
+      if (farFromStart && farFromOthers) {
+        selected = candidate;
+        break;
+      }
+    }
+
+    // Respaldo extremadamente improbable si no se encuentra un punto al azar.
+    const fallback = [
+      { x: -9, z: -10 },
+      { x: 9, z: -18 },
+      { x: 8, z: 10 },
+    ][index];
+    const point = selected ?? fallback;
+
+    points.push({
+      id: `wp-${index + 1}`,
+      label: `WP${index + 1}`,
+      x: Math.round(point.x * 10) / 10,
+      z: Math.round(point.z * 10) / 10,
+    });
+  }
+
+  return points;
+};
+
+const hasOldDefaultWaypoints = (value: unknown) => {
+  if (!Array.isArray(value) || value.length !== OLD_DEFAULT_WAYPOINTS.length) return false;
+
+  return OLD_DEFAULT_WAYPOINTS.every((expected) => {
+    const actual = value.find((point) => point && typeof point === "object" && "id" in point && point.id === expected.id) as
+      | { x?: unknown; z?: unknown }
+      | undefined;
+    return actual?.x === expected.x && actual?.z === expected.z;
+  });
+};
+
+const seedRandomDefaultMission = () => {
+  try {
+    const stored = globalThis.localStorage?.getItem(MISSION_STORAGE_KEY);
+    let shouldSeed = !stored;
+    let preservedBlocks: unknown[] | undefined;
+
+    if (stored) {
+      const parsed = JSON.parse(stored) as { waypoints?: unknown; blocks?: unknown };
+      shouldSeed = hasOldDefaultWaypoints(parsed.waypoints);
+      if (Array.isArray(parsed.blocks)) preservedBlocks = parsed.blocks;
+    }
+
+    if (!shouldSeed) return;
+
+    const waypoints = makeRandomDefaultWaypoints();
+    const blocks = preservedBlocks ?? waypoints.map((point, index) => ({
+      id: `default-block-${index + 1}`,
+      type: "waypoint",
+      waypointId: point.id,
+    }));
+
+    globalThis.localStorage?.setItem(MISSION_STORAGE_KEY, JSON.stringify({ waypoints, blocks }));
+  } catch (error) {
+    console.warn("No se pudo preparar la misión inicial aleatoria", error);
+  }
+};
+
+seedRandomDefaultMission();

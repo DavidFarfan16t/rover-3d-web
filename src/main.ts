@@ -91,10 +91,14 @@ async function start() {
   // mismo cuadro y el rover conserva contornos nítidos durante la marcha.
   orbit.enableDamping = false;
   orbit.enablePan = false;
-  orbit.maxPolarAngle = Math.PI * 0.49;
+  // Permite bajar la cámara por debajo del centro del rover para obtener
+  // vistas a ras del suelo. La separación con el terreno se corrige después
+  // de cada actualización de los controles.
+  orbit.maxPolarAngle = Math.PI * 0.58;
   orbit.minDistance = 1.7;
   orbit.maxDistance = 12;
   orbit.target.set(0, 0.55, START.z);
+  const cameraGroundClearance = 0.12;
 
   scene.add(new THREE.HemisphereLight(0xffcfaa, 0x28100a, 1.6));
   const sun = new THREE.DirectionalLight(0xffd8b8, 3.8);
@@ -1300,6 +1304,12 @@ async function start() {
       orbit.enablePan = true;
     }
     orbit.update();
+
+    const minimumCameraY = terrainHeight(camera.position.x, camera.position.z) + cameraGroundClearance;
+    if (camera.position.y < minimumCameraY) {
+      camera.position.y = minimumCameraY;
+      camera.lookAt(orbit.target);
+    }
   };
 
   resetRover();

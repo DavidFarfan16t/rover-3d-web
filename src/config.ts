@@ -17,7 +17,7 @@ export const MAX_INDEPENDENT_ROCKER_ANGLE = 0.52;
 export const MAX_DIFFERENTIAL_ANGLE = 0.35;
 export const MAX_VISUAL_ROLL = 0.40;
 export const NORMAL_MAX_DRIVE_SPEED = 2.5;
-export const TURBO_TARGET_SPEED_KMH = 25;
+export const TURBO_TARGET_SPEED_KMH = 20;
 export const TURBO_MAX_DRIVE_SPEED = TURBO_TARGET_SPEED_KMH / 3.6;
 
 // Tren motriz: cuatro motores de 2,6 N·m, cada uno con reducción 50:1.

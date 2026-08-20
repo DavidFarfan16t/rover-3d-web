@@ -874,7 +874,10 @@ async function start() {
   };
 
   window.addEventListener("keydown", (event) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement) return;
+    // Los botones conservan el foco después de hacer clic. Permitimos los
+    // controles del rover desde ellos para que no sea necesario volver a
+    // hacer clic sobre el canvas antes de usar W/A/S/D.
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
     if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
       event.preventDefault();
       setPressed(event.code, true);
@@ -905,7 +908,10 @@ async function start() {
     button.addEventListener("pointercancel", release);
   });
   ui.cameraButton.addEventListener("click", toggleCamera);
-  ui.turboButton.addEventListener("click", () => setTurboMode(!turboMode));
+  ui.turboButton.addEventListener("click", () => {
+    setTurboMode(!turboMode);
+    ui.turboButton.blur();
+  });
   ui.resetButton.addEventListener("click", () => resetRover());
 
   const redrawCurrentMap = () => drawMissionMap(chassisBody.translation(), chassisBody.rotation());
@@ -1016,7 +1022,9 @@ async function start() {
 
   const updateVehicle = (dt: number) => {
     const keyboardThrottle = Number(pressed.has("KeyW")) - Number(pressed.has("KeyS"));
-    const manualThrottle = turboMode ? 1 : keyboardThrottle;
+    // El turbo aumenta el límite de velocidad, pero no sustituye la orden de
+    // acelerar: el rover solo avanza mientras W está pulsada.
+    const manualThrottle = keyboardThrottle;
     const manualSteer = Number(pressed.has("KeyA")) - Number(pressed.has("KeyD"));
     const autonomous = getMissionCommand();
     const autopilotActive = mission.running && !mission.paused;
@@ -1036,9 +1044,11 @@ async function start() {
 
     const targetBrake = autopilotActive
       ? autonomous.brake * AUTOPILOT_BRAKE
-      : turboMode
-        ? THREE.MathUtils.clamp((speedNow - TURBO_MAX_DRIVE_SPEED) * 1.8, 0, 0.55)
-        : Math.abs(manualThrottle) < 0.01 ? MANUAL_BRAKE : 0;
+      : Math.abs(manualThrottle) < 0.01
+        ? MANUAL_BRAKE
+        : turboMode
+          ? THREE.MathUtils.clamp((speedNow - TURBO_MAX_DRIVE_SPEED) * 1.8, 0, 0.55)
+          : 0;
     driveBrake = moveTowards(driveBrake, targetBrake, (targetBrake > driveBrake ? 1.8 : 5.0) * dt);
 
     // Reserva progresiva de par: se activa al apuntar cuesta arriba o cuando

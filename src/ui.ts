@@ -11,7 +11,7 @@ const turboButton = (() => {
   button.className = "panel-button secondary";
   button.type = "button";
   button.textContent = `TURBO ${TURBO_TARGET_SPEED_KMH} KM/H: APAGADO`;
-  button.title = "Acelera automáticamente hacia delante hasta 18 km/h";
+  button.title = "Aumenta el límite a 18 km/h mientras mantienes W";
   button.setAttribute("aria-pressed", "false");
   document.querySelector<HTMLButtonElement>("#reset-button")?.before(button);
   return button;
